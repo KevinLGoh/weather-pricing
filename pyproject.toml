@@ -1,0 +1,32 @@
+[project]
+name = "weather-pricing"
+version = "0.1.0"
+description = "Do weather prediction-market prices add information beyond NWP forecasts? MVP research pipeline."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "pyarrow>=14",
+    "requests>=2.31",
+    "scikit-learn>=1.4",
+    "scipy>=1.11",
+    "xgboost>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+wp = "weather_pricing.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+filterwarnings = ["ignore::UserWarning"]
