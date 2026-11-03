@@ -1,5 +1,6 @@
 """Synthetic end-to-end check: if quotes carry information the forecast lacks, C beats A."""
 
+import pickle
 import warnings
 from datetime import date, timedelta
 
@@ -10,7 +11,11 @@ from scipy.stats import norm
 
 from weather_pricing import evaluate as ev
 from weather_pricing.experiment import chronological_split
-from weather_pricing.models import GaussianRule, fit_predict, weather_features
+from weather_pricing.models import GaussianRule, fit_models, fit_predict, predict_models, weather_features
+
+MODEL_NAMES = {
+    "R_gaussian_rule", "A_logit", "A_xgb", "B_market_mid", "B_market_norm", "B_logit", "C_logit", "C_xgb",
+}
 
 
 def synthetic(n_days=500, seed=0):
@@ -60,3 +65,22 @@ def test_weather_features_emits_no_deprecation_warning():
         features = weather_features(df, rule)
     # The first row has target_date 2024-01-01, which is day 1 of the year.
     assert features["doy_sin"].iloc[0] == pytest.approx(np.sin(2 * np.pi * 1 / 365.25))
+
+
+def test_pickled_models_reproduce_predictions(tmp_path):
+    df = synthetic(n_days=150)
+    df["event_id"] = df["city"] + ":" + df["target_date"].astype(str)
+    train, test, val_mask = chronological_split(df, 0.3)
+    expected = fit_predict(train, test, val_mask)
+
+    models = fit_models(train, val_mask)
+    path = tmp_path / "models.pkl"
+    with open(path, "wb") as f:
+        pickle.dump(models, f)
+    with open(path, "rb") as f:
+        loaded = pickle.load(f)
+    got = predict_models(loaded, test)
+
+    assert set(got) == set(expected) == MODEL_NAMES
+    for name in MODEL_NAMES:
+        np.testing.assert_allclose(got[name], expected[name], err_msg=name)

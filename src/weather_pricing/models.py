@@ -117,28 +117,39 @@ def _fit_xgb(X: pd.DataFrame, y: np.ndarray, val_mask: np.ndarray):
     return model
 
 
-def fit_predict(train: pd.DataFrame, test: pd.DataFrame, val_mask: np.ndarray) -> dict[str, np.ndarray]:
-    """Fit every model on `train` and return test-set probabilities keyed by model name."""
+def _feature_sets(df: pd.DataFrame, rule: GaussianRule) -> dict[str, pd.DataFrame]:
+    """Inputs of each family: A weather-only, B market-only, C both."""
+    wf, mf = weather_features(df, rule), market_features(df)
+    return {"A": wf, "B": mf, "C": pd.concat([wf, mf], axis=1)}
+
+
+def fit_models(train: pd.DataFrame, val_mask: np.ndarray) -> dict:
+    """Fit the rule baseline and every learned model on `train`."""
     y = train["y"].to_numpy()
     rule = GaussianRule().fit(train)
-    wf_tr, wf_te = weather_features(train, rule), weather_features(test, rule)
-    mf_tr, mf_te = market_features(train), market_features(test)
-    cf_tr, cf_te = pd.concat([wf_tr, mf_tr], axis=1), pd.concat([wf_te, mf_te], axis=1)
+    X = _feature_sets(train, rule)
+    models: dict = {"R_gaussian_rule": rule}
+    for name in ["A_logit", "B_logit", "C_logit"]:
+        models[name] = _logit_model().fit(X[name[0]], y)
+    for name in ["A_xgb", "C_xgb"]:
+        models[name] = _fit_xgb(X[name[0]], y, val_mask)
+    return models
 
+
+def predict_models(models: dict, test: pd.DataFrame) -> dict[str, np.ndarray]:
+    """Test-set probabilities of every model, keyed by model name."""
+    rule = models["R_gaussian_rule"]
+    X = _feature_sets(test, rule)
     preds: dict[str, np.ndarray] = {
         "R_gaussian_rule": rule.predict(test),
         "B_market_mid": clip(test["mid"]),
         "B_market_norm": clip(test["mid_norm"]),
     }
-    for name, (Xtr, Xte) in {
-        "A_logit": (wf_tr, wf_te),
-        "B_logit": (mf_tr, mf_te),
-        "C_logit": (cf_tr, cf_te),
-    }.items():
-        preds[name] = clip(_logit_model().fit(Xtr, y).predict_proba(Xte)[:, 1])
-    for name, (Xtr, Xte) in {
-        "A_xgb": (wf_tr, wf_te),
-        "C_xgb": (cf_tr, cf_te),
-    }.items():
-        preds[name] = clip(_fit_xgb(Xtr, y, val_mask).predict_proba(Xte)[:, 1])
+    for name in ["A_logit", "B_logit", "C_logit", "A_xgb", "C_xgb"]:
+        preds[name] = clip(models[name].predict_proba(X[name[0]])[:, 1])
     return preds
+
+
+def fit_predict(train: pd.DataFrame, test: pd.DataFrame, val_mask: np.ndarray) -> dict[str, np.ndarray]:
+    """Fit every model on `train` and return test-set probabilities keyed by model name."""
+    return predict_models(fit_models(train, val_mask), test)

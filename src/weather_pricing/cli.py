@@ -29,6 +29,7 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("--n-boot", type=int, default=2000)
     e.add_argument("--rate", type=float, default=0.04, help="annual risk-free rate (continuous)")
     e.add_argument("--wang-lambda", type=float, default=0.0, help="risk loading for valuation")
+    e.add_argument("--save-artifacts", action="store_true", help="also write models, predictions and results to app_artifacts/")
 
     args = p.parse_args(argv)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -45,7 +46,14 @@ def main(argv: list[str] | None = None) -> None:
         from .experiment import run
 
         df = pd.read_parquet(PROCESSED_DIR / "snapshots.parquet")
-        summary = run(df, test_frac=args.test_frac, n_boot=args.n_boot, rate=args.rate, wang_lambda=args.wang_lambda)
+        summary = run(
+            df,
+            test_frac=args.test_frac,
+            n_boot=args.n_boot,
+            rate=args.rate,
+            wang_lambda=args.wang_lambda,
+            save_artifacts=args.save_artifacts,
+        )
         print(summary)
 
 

@@ -7,10 +7,11 @@ import json
 import numpy as np
 import pandas as pd
 
+from . import artifacts
 from . import evaluate as ev
 from . import valuation as val
 from .config import RESULTS_DIR
-from .models import fit_predict
+from .models import fit_models, predict_models
 
 MAIN = ["R_gaussian_rule", "A_logit", "A_xgb", "B_market_mid", "B_market_norm", "B_logit", "C_logit", "C_xgb"]
 
@@ -25,6 +26,31 @@ COMPARISONS = [
 ]
 
 
+# Columns of the test-set predictions table, besides one column per model. The app shows
+# these, so they are also what app_artifacts/predictions.parquet carries.
+APP_COLUMNS = [
+    "city",
+    "event_id",
+    "event_ticker",
+    "ticker",
+    "target_date",
+    "snapshot",
+    "lead_hours",
+    "strike_type",
+    "low",
+    "high",
+    "bid",
+    "ask",
+    "mid",
+    "mid_norm",
+    "spread",
+    "stale",
+    "settle_source",
+    "settled_value",
+    "y",
+]
+
+
 def chronological_split(df: pd.DataFrame, test_frac: float, val_frac: float = 0.2):
     dates = np.sort(df["target_date"].unique())
     cut = dates[int(len(dates) * (1 - test_frac))]
@@ -35,9 +61,18 @@ def chronological_split(df: pd.DataFrame, test_frac: float, val_frac: float = 0.
     return train, test, val_mask
 
 
-def run(df: pd.DataFrame, test_frac: float = 0.3, n_boot: int = 2000, rate: float = 0.04, wang_lambda: float = 0.0) -> str:
+def run(
+    df: pd.DataFrame,
+    test_frac: float = 0.3,
+    n_boot: int = 2000,
+    rate: float = 0.04,
+    wang_lambda: float = 0.0,
+    save_artifacts: bool = False,
+) -> str:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     n0 = len(df)
+    data_date_range = [str(df["target_date"].min()), str(df["target_date"].max())]
+    cities = sorted(str(c) for c in df["city"].unique())
     # Kalshi omits the settled temperature on most pre-2025 contracts (and keeps it mainly on
     # the winning bracket), so dropping those rows would bias the sample towards Yes. NOAA's
     # TMAX matches the settled value ~99% of the time; it only feeds the Gaussian error fit,
@@ -47,10 +82,11 @@ def run(df: pd.DataFrame, test_frac: float = 0.3, n_boot: int = 2000, rate: floa
     df = df.dropna(subset=["fc_tmax", "mid", "mid_norm", "settled_value"]).reset_index(drop=True)
     df["event_id"] = df["city"] + ":" + df["target_date"].astype(str)
     train, test, val_mask = chronological_split(df, test_frac)
-    preds = fit_predict(train, test, val_mask)
+    models = fit_models(train, val_mask)
+    preds = predict_models(models, test)
     y, groups = test["y"].to_numpy(), test["event_id"].to_numpy()
 
-    out = test[["city", "event_id", "ticker", "target_date", "snapshot", "lead_hours", "spread", "stale", "settle_source", "y"]].copy()
+    out = test[APP_COLUMNS].copy()
     for k, p in preds.items():
         out[k] = p
     out.to_parquet(RESULTS_DIR / "test_predictions.parquet", index=False)
@@ -124,6 +160,19 @@ def run(df: pd.DataFrame, test_frac: float = 0.3, n_boot: int = 2000, rate: floa
 
     md = render_summary(meta, scores, boot, enc, by_lead, by_liq, by_city, by_source, valuation)
     (RESULTS_DIR / "summary.md").write_text(md)
+
+    if save_artifacts:
+        info = {
+            "data_date_range": data_date_range,
+            "cities": cities,
+            "rows_in": meta["rows_in"],
+            "rows_used": meta["rows_used"],
+            "train": meta["train"],
+            "test": meta["test"],
+            "settings": {"test_frac": test_frac, "n_boot": n_boot, "rate": rate, "wang_lambda": wang_lambda},
+        }
+        # Only the app's columns and the model probabilities; not the liquidity helper column.
+        artifacts.save(artifacts.ARTIFACTS_DIR, models, out[APP_COLUMNS + list(preds)], RESULTS_DIR, info)
     return md
 
 
