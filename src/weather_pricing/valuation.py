@@ -27,6 +27,14 @@ class Note:
     coupon: float = 0.0
 
 
+SETTLEMENT_DELAY_HOURS = 8  # Kalshi settles the morning after the local day ends.
+
+
+def horizon_years(lead_hours) -> np.ndarray:
+    """Years from the snapshot until the note pays, about 8 h after the local day ends."""
+    return (np.asarray(lead_hours, dtype=float) + SETTLEMENT_DELAY_HOURS) / (24 * 365.25)
+
+
 def discount(rate: float, years) -> np.ndarray:
     return np.exp(-rate * np.asarray(years, dtype=float))
 

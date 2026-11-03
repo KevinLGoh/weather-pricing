@@ -128,7 +128,7 @@ def run(
     rel.to_csv(RESULTS_DIR / "reliability.csv", index=False)
 
     # Valuation: the note pays ~8h after the local day ends (Kalshi settles next morning).
-    years = (out["lead_hours"].to_numpy() + 8) / (24 * 365.25)
+    years = val.horizon_years(out["lead_hours"].to_numpy())
     note = val.Note()
     v = {k: val.value(preds[k], years, note, rate, wang_lambda) for k in ["A_xgb", "B_market_norm", "C_xgb"]}
     realised = val.realised_value(y, years, note, rate)

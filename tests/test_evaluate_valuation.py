@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from weather_pricing import evaluate as ev
 from weather_pricing import valuation as val
@@ -54,3 +55,11 @@ def test_wang_loading_lowers_value():
     assert np.allclose(val.wang(p, 0.0), p)
     assert (val.value(p, t, lam=0.3) < val.value(p, t, lam=0.0)).all()
     assert np.isclose(val.realised_value(1, 0.0), 500)
+
+
+def test_horizon_years_adds_the_settlement_delay():
+    # The note pays about 8 h after the local day ends: 16 h lead -> 24 h horizon.
+    year_hours = 24 * 365.25
+    assert val.horizon_years(16.0) == pytest.approx(24 / year_hours)
+    hours = np.array([24.0, 42.0])
+    assert np.allclose(val.horizon_years(np.array([16.0, 34.0])), hours / year_hours)
