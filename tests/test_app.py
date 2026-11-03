@@ -130,6 +130,12 @@ ROBUSTNESS = [
     ("settle_source", "settle_source", "The Weather Company", 6, (0.0957, 0.0836, 0.0802, 0.0794)),
 ]
 LIQUIDITY_ORDER = ["spread<=2c", "2-5c", ">5c", "stale/no quote"]  # tightest spread first
+LIQUIDITY_LABELS = {  # stored bucket -> page label
+    "spread<=2c": "Spread ≤ 2¢",
+    "2-5c": "Spread 2–5¢",
+    ">5c": "Spread > 5¢",
+    "stale/no quote": "Stale or no quote",
+}
 BRIER_COLUMNS = {  # robustness column -> page column
     "A_xgb": "Weather-only, XGBoost",
     "B_market_norm": "Market mid, renormalised",
@@ -476,6 +482,41 @@ def test_explorer_shows_the_quote_as_a_dollar_price(tmp_path, monkeypatch):
     assert any(expected in m.value for m in at.markdown), expected
 
 
+def _expected_contracts_table(one_sided=None):
+    """The explorer's contracts table for the synthetic quotes; `one_sided` has no bid or ask."""
+    order = ["T68", "B69.5", "B71.5", "T73"]  # lowest bracket first, as the explorer lists them
+    labels = ["68°F or below", "69–70°F", "71–72°F", "73°F or above"]
+    suffixes = [suffix for *_, suffix in BRACKETS]
+    table = {"Bracket": labels, "Bid": [], "Ask": [], "Mid": []}
+    for suffix in order:
+        bid = round(0.05 + 0.2 * suffixes.index(suffix), 2)
+        if suffix == one_sided:
+            table["Bid"].append("—")
+            table["Ask"].append("—")
+            table["Mid"].append("$0.45")
+        else:
+            table["Bid"].append(f"${bid:.2f}")
+            table["Ask"].append(f"${round(bid + 0.04, 2):.2f}")
+            table["Mid"].append(f"${round(bid + 0.02, 2):.2f}")
+    return table
+
+
+def test_explorer_table_shows_dollar_prices(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch)
+    at.run()
+    assert not at.exception
+    table = _table(at)
+    assert table == _expected_contracts_table()
+    assert table["Bid"][0] == "$0.25"  # T68, spelled out
+    day, snap, suffix = ONE_SIDED
+    _selectbox(at, "Date").set_value(day).run()
+    _selectbox(at, "Snapshot").set_value(snap).run()
+    assert not at.exception
+    table = _table(at)
+    assert table == _expected_contracts_table(one_sided=suffix)
+    assert (table["Bid"][2], table["Ask"][2], table["Mid"][2]) == ("—", "—", "$0.45")
+
+
 def test_explorer_names_the_last_trade_without_a_two_sided_quote(tmp_path, monkeypatch):
     at = _app(tmp_path, monkeypatch)
     at.run()
@@ -771,7 +812,9 @@ def test_evidence_shows_scores_for_every_model(tmp_path, monkeypatch):
         "ECE": [f"{SCORES[m][2]:.3f}" for m in experiment.MAIN],
     }
     test = SPLIT["test"]
-    caption = f"Test period 2025-12-11 to 2026-01-03: {test['events']} days, {test['rows']:,} contract snapshots."
+    caption = (
+        f"Test period 2025-12-11 to 2026-01-03: {test['events']} city-days, {test['rows']:,} contract snapshots."
+    )
     assert any(c.value == caption for c in at.caption), caption
 
 
@@ -918,7 +961,8 @@ def test_evidence_shows_robustness_by_liquidity_and_settlement_source(tmp_path, 
         ("Settlement source", "settle_source", _cut_rows("settle_source")),
     ]:
         table = by_first[first]
-        assert table[first] == [r[key] for r in rows], first
+        shown = [LIQUIDITY_LABELS[r[key]] for r in rows] if first == "Liquidity" else [r[key] for r in rows]
+        assert table[first] == shown, first
         assert table["City-days"] == [r["events"] for r in rows], first
         for label, values in _brier_columns(rows).items():
             assert table[label] == values, (first, label)
@@ -939,25 +983,114 @@ def test_evidence_encompassing_text_names_both_models_and_the_weather_p_value(tm
     text = _after_subheader(at, "Encompassing regression").value
     assert shared.MODEL_LABELS["A_logit"] in text
     assert shared.MODEL_LABELS["B_market_norm"] in text
-    assert "not clearly different from zero (p = 0.42)" in text  # ENCOMPASSING: p = 0.4152
+    assert "not clearly different from zero (p = 0.415)" in text  # ENCOMPASSING: p = 0.4152
     # With a weather p-value below 0.05 the sentence must not say "not clearly".
-    folder = _write_artifacts(tmp_path / "low_p")
+    at = _evidence_with_weather_p(tmp_path / "low_p", monkeypatch, 0.01)
+    assert not at.exception
+    text = _after_subheader(at, "Encompassing regression").value
+    assert "is clearly different from zero (p = 0.010)" in text
+    assert "not clearly" not in text
+
+
+def _evidence_with_weather_p(tmp_path, monkeypatch, p):
+    """AppTest on the Model Evidence page, with `p` as the weather p-value of the encompassing regression."""
+    folder = _write_artifacts(tmp_path / "app_artifacts")
     encompassing = pd.read_csv(folder / "encompassing.csv", index_col=0)
-    encompassing.loc["logit_weather", "p_value"] = 0.01
+    encompassing.loc["logit_weather", "p_value"] = p
     encompassing.to_csv(folder / "encompassing.csv")
     at = _app(tmp_path, monkeypatch, folder=folder)
     at.run()
     at.switch_page("model_evidence.py").run()
+    return at
+
+
+def test_evidence_p_values_read_well(tmp_path, monkeypatch):
+    at = _evidence_with_weather_p(tmp_path / "nan", monkeypatch, math.nan)
+    assert not at.exception
+    assert not at.error
+    assert _evidence_table(at, "Term")["p-value"][1] == "n/a"  # the weather term
+    text = _after_subheader(at, "Encompassing regression").value
+    assert "The weather coefficient has no p-value in the results." in text
+    assert "nan" not in text
+    at = _evidence_with_weather_p(tmp_path / "p049", monkeypatch, 0.049)
     assert not at.exception
     text = _after_subheader(at, "Encompassing regression").value
-    assert "is clearly different from zero (p = 0.01)" in text
+    assert "is clearly different from zero (p = 0.049)" in text
     assert "not clearly" not in text
 
 
 def test_evidence_lists_liquidity_with_the_tightest_spread_first(tmp_path, monkeypatch):
     at = _evidence(tmp_path, monkeypatch)
     assert not at.exception
-    assert _evidence_table(at, "Liquidity")["Liquidity"] == ["spread<=2c", "2-5c", ">5c", "stale/no quote"]
+    labels = ["Spread ≤ 2¢", "Spread 2–5¢", "Spread > 5¢", "Stale or no quote"]
+    assert _evidence_table(at, "Liquidity")["Liquidity"] == labels
+
+
+def test_evidence_shows_readable_liquidity_labels(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    assert _evidence_table(at, "Liquidity")["Liquidity"] == [
+        "Spread ≤ 2¢",
+        "Spread 2–5¢",
+        "Spread > 5¢",
+        "Stale or no quote",
+    ]
+    # A bucket the page does not know is shown as stored, after the known ones.
+    folder = _write_artifacts(tmp_path / "unknown")
+    robustness = pd.read_csv(folder / "robustness.csv")
+    unknown = robustness[robustness["liquidity"] == "2-5c"].assign(liquidity="other bucket")
+    pd.concat([unknown, robustness]).to_csv(folder / "robustness.csv", index=False)
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    at.run()
+    at.switch_page("model_evidence.py").run()
+    assert not at.exception
+    assert _evidence_table(at, "Liquidity")["Liquidity"] == [
+        "Spread ≤ 2¢",
+        "Spread 2–5¢",
+        "Spread > 5¢",
+        "Stale or no quote",
+        "other bucket",
+    ]
+
+
+def test_evidence_counts_city_days(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    train, test = SPLIT["train"], SPLIT["test"]
+    caption = (
+        f"Test period {test['dates'][0]} to {test['dates'][1]}: {test['events']} city-days, "
+        f"{test['rows']:,} contract snapshots."
+    )
+    assert any(c.value == caption for c in at.caption), caption
+    expanders = [e for e in at.expander if e.label == "Where these results come from"]
+    assert len(expanders) == 1
+    text = "\n".join(m.value for m in expanders[0].markdown)
+    assert f"Training period: {train['dates'][0]} to {train['dates'][1]} ({train['events']} city-days)." in text
+    assert f"Test period: {test['dates'][0]} to {test['dates'][1]} ({test['events']} city-days)." in text
+    for value in [e.value for kind in (at.caption, at.markdown) for e in kind]:
+        assert not re.search(r"\d days", value), value
+
+
+def test_evidence_works_with_an_older_data_quality_file(tmp_path, monkeypatch):
+    folder = _write_artifacts(tmp_path / "app_artifacts")
+    older = {k: v for k, v in DATA_QUALITY.items() if k != "incomplete_bracket_rows"}
+    (folder / "data_quality.json").write_text(json.dumps(older))
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    at.run()
+    at.switch_page("model_evidence.py").run()
+    assert not at.exception
+    assert not at.error
+    subheaders = [s.value for s in at.subheader]
+    assert "Calibration" in subheaders
+    assert "Limitations" in subheaders
+    expanders = [e for e in at.expander if e.label == "Where these results come from"]
+    assert len(expanders) == 1
+    text = "\n".join(m.value for m in expanders[0].markdown)
+    lines = [line for line in text.splitlines() if "Data quality:" in line]
+    assert len(lines) == 1, text
+    for words in ["99.84%", "99.21%", "37 rows without a complete forecast day"]:
+        assert words in lines[0], words
+    assert "incomplete bracket" not in lines[0]
 
 
 def test_evidence_counts_the_weather_company_city_days(tmp_path, monkeypatch):

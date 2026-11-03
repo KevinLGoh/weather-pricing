@@ -197,11 +197,12 @@ weather-only baseline. With λ = 0.25 the three values are \$807.26, \$709.98 an
 - **The history is longer than we expected.** Kalshi has NYC daily-high markets from
   Aug 2021. The series name was `HIGHNY` until 24 Oct 2024, and `KXHIGHNY` after that
   date. For markets that settled before the exchange's historical cutoff, only the
-  `/historical/*` endpoints return data.
+  `/historical/*` endpoints return data. Asking for series `KXHIGHNY` also returns the
+  older `HIGHNY-…` markets; asking for `HIGHNY` returns nothing (checked 2026-11-04).
 - **The lead times are short.** A market opens at about 10:00 ET on the day before its
   target date. It stops trading at local midnight. Thus, the 7-day and 3-day horizons in
-  the plan do not exist. The builder takes snapshots at D-1 14:00, D-1 22:00, D 08:00 and
-  D 12:00 local time. These are 34 to 12 hours before the target day ends.
+  the plan do not exist. The builder takes snapshots at D-1 14:00, D-1 22:00, D-0 08:00
+  and D-0 12:00 local time. These are 34 to 12 hours before the target day ends.
 - **The settlement source changed.** Contracts for target days up to 2026-08-13 cite the
   NWS Daily Climate Report; from 2026-08-14 they cite The Weather Company. The rule-text
   extractor records the source for each contract; `data_quality.json` counts the
@@ -229,7 +230,7 @@ time:
   `previous_day1..5` runs that had been published before the snapshot, assuming a run is
   published 6 hours after it starts. No run younger than `previous_day1` (started about
   a day before the valid hour) is available, so the forecast used is often 7–23 h old at
-  the snapshot and is the same at D 08:00 and D 12:00 (see Limitations). The daily
+  the snapshot and is the same at D-0 08:00 and D-0 12:00 (see Limitations). The daily
   maximum comes from these hourly values.
 - **Persistence:** the builder uses the observed high of the last local day that ended
   before the snapshot.
@@ -347,12 +348,12 @@ The test set has 414 city-days (2025-09-15 to 2026-11-02), in 9,918 rows.
 
 **Interpretation.** The weather baseline is one deterministic NWP run (Open-Meteo best
 match) from a public archive, with simple statistical post-processing. Traders very
-probably use ensembles, MOS/NBM guidance and live station observations. At the D 08:00
-and D 12:00 snapshots, the morning observations are already available. Thus, part of the
+probably use ensembles, MOS/NBM guidance and live station observations. At the D-0 08:00
+and D-0 12:00 snapshots, the morning observations are already available. Thus, part of the
 market advantage comes from nowcasting.
 
-Thus, the data supports this claim: *Kalshi prices contain all the information in a
-public deterministic NWP forecast for this type of event.* These results are about this
+Thus, the data supports this claim: *Kalshi prices contain all the information in this
+public deterministic NWP forecast (Open-Meteo best match) for this type of event.* These results are about this
 weather baseline only; they are not evidence that prediction markets are better than
 meteorology in general. The next test is a stronger
 weather model with ensemble spread, NBM and intraday observations up to the snapshot.
@@ -382,7 +383,7 @@ run hold. The differences:
 ## Limitations
 
 - **Forecast age.** The builder cannot use a run younger than `previous_day1`, so at the
-  snapshot the forecast is often 7–23 h old, and it is the same at D 08:00 and D 12:00.
+  snapshot the forecast is often 7–23 h old, and it is the same at D-0 08:00 and D-0 12:00.
   This likely overstates the market's advantage. A forecast source with intraday runs is
   future work.
 - **Short horizons.** These markets have horizons of 34 hours or less. The results give no
@@ -412,12 +413,6 @@ run hold. The differences:
   run offline.
 - On Streamlit Community Cloud the Python version is chosen in the app's settings, not
   by this repo; it must be set to 3.12 by hand.
-- In the Contract Explorer the contracts table shows the raw mid (for example 0.495),
-  while the quote line rounds it to two decimals (\$0.49).
-- Model Evidence shows liquidity buckets with their stored labels (`spread<=2c`, `2-5c`,
-  `>5c`, `stale/no quote`).
-- A `data_quality.json` written by an older `build` lacks the newer keys (for example
-  `incomplete_bracket_rows`); run `build` again before `evaluate --save-artifacts`.
 
 ## Future enhancements
 
@@ -426,7 +421,6 @@ run hold. The differences:
 - Rolling-origin evaluation and event-level scores such as the ranked probability score.
 - More cities (Chicago first), and live scoring of open Kalshi markets.
 - Deep-learning models and an LLM-based rule extractor (Model D).
-- Format the contracts table as dollar prices like the quote line.
 
 ## Dependencies
 

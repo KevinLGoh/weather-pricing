@@ -58,7 +58,7 @@ def _results_dir(tmp_path, names=("scores.csv", "split.json")):
 
 def _raw_dir(monkeypatch, path):
     """Point save() at a test raw folder, so it never reads the real data/raw/noaa."""
-    monkeypatch.setattr(artifacts, "RAW_DIR", path, raising=False)
+    monkeypatch.setattr(artifacts, "RAW_DIR", path)
 
 
 def _noaa_cache_file(folder, name, fetched):

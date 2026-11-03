@@ -1,13 +1,16 @@
 """evaluate end to end on a small synthetic snapshot frame, with and without --save-artifacts."""
 
+import importlib
 import json
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from scipy.stats import norm
 
-from weather_pricing import artifacts, cli, experiment
+from weather_pricing import artifacts, cli, experiment, inference
 
 MODEL_NAMES = [
     "R_gaussian_rule", "A_logit", "A_xgb", "B_market_mid", "B_market_norm", "B_logit", "C_logit", "C_xgb",
@@ -66,6 +69,7 @@ def _run_cli(tmp_path, monkeypatch, *extra):
     monkeypatch.setattr(cli, "RESULTS_DIR", tmp_path / "results")
     monkeypatch.setattr(experiment, "RESULTS_DIR", tmp_path / "results")
     monkeypatch.setattr(artifacts, "ARTIFACTS_DIR", tmp_path / "app_artifacts")
+    monkeypatch.setattr(artifacts, "RAW_DIR", tmp_path / "raw")
     monkeypatch.setattr(artifacts, "_git", _fake_git)
     cli.main(["evaluate", "--n-boot", "50", *extra])
     return frame
@@ -108,3 +112,57 @@ def test_evaluate_without_flag_writes_no_artifacts(tmp_path, monkeypatch):
     _run_cli(tmp_path, monkeypatch)
     assert not (tmp_path / "app_artifacts").exists()
     assert (tmp_path / "results" / "scores.csv").exists()
+
+
+def test_saved_artifacts_feed_the_inference_layer_and_every_app_page(tmp_path, monkeypatch):
+    frame = _run_cli(tmp_path, monkeypatch, "--save-artifacts")
+    out = tmp_path / "app_artifacts"
+    monkeypatch.setattr(inference, "_artifacts_dir", out)  # restored to the default after the test
+    inference.clear_cache()
+
+    cities = inference.list_cities()
+    assert cities == ["CHI", "NY"]
+    city = cities[0]
+    dates = inference.list_dates(city)
+    assert dates
+    day = dates[0]
+    snapshots = inference.list_snapshots(city, day)
+    assert snapshots
+    snapshot = snapshots[0]
+    contracts = inference.list_contracts(city, day, snapshot)
+    assert not contracts.empty
+    ticker = contracts["ticker"].iloc[0]
+
+    result = inference.predict(city, day, snapshot, ticker)
+    probabilities = result["probabilities"]
+    assert set(probabilities) == set(experiment.MAIN)
+    assert all(0.0 <= p <= 1.0 for p in probabilities.values()), probabilities
+    prices = inference.price_note(probabilities, result["contract"]["lead_hours"], 1000, 0.5, 0, 0)
+    assert sorted(prices["model"]) == sorted(experiment.MAIN)
+    assert prices["value"].notna().all()
+
+    evidence = inference.load_evidence()
+    for name in ["scores", "bootstrap", "encompassing", "reliability", "robustness"]:
+        assert not evidence[name].empty, name
+    assert evidence["manifest"]["rows_in"] == len(frame)
+
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    monkeypatch.syspath_prepend(str(app_dir))
+    shared = importlib.import_module("shared")
+    monkeypatch.setattr(shared, "ARTIFACTS_DIR", out)
+    at = AppTest.from_file(str(app_dir / "streamlit_app.py"), default_timeout=60)
+    at.run()  # Contract Explorer
+    assert not at.exception
+    assert not at.error
+    selection = {"city": city, "date": day.isoformat(), "snapshot": snapshot, "ticker": ticker}
+    at.session_state["selection"] = selection
+    at.switch_page("note_pricer.py").run()
+    assert not at.exception
+    assert not at.error
+    assert len(at.dataframe) >= 1
+    at.switch_page("model_evidence.py").run()
+    assert not at.exception
+    assert not at.error

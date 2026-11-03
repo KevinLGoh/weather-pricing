@@ -31,9 +31,18 @@ with shared.guarded():
     snapshot = st.selectbox("Snapshot", inference.list_snapshots(city, day))
     contracts = inference.list_contracts(city, day, snapshot)
     label = st.selectbox("Contract", contracts["label"].tolist())
+    # Dollar prices with two decimals, like the quote line below; "—" where there is no quote.
+    def dollars(x) -> str:
+        return "—" if pd.isna(x) else f"${x:.2f}"
+
     st.dataframe(
-        contracts[["label", "bid", "ask", "mid"]].rename(
-            columns={"label": "Bracket", "bid": "Bid", "ask": "Ask", "mid": "Mid"}
+        pd.DataFrame(
+            {
+                "Bracket": contracts["label"],
+                "Bid": [dollars(x) for x in contracts["bid"]],
+                "Ask": [dollars(x) for x in contracts["ask"]],
+                "Mid": [dollars(x) for x in contracts["mid"]],
+            }
         ),
         hide_index=True,
     )

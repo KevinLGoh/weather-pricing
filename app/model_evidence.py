@@ -44,6 +44,12 @@ BRIER_COLUMNS = {
 CALIBRATION_MODELS = ["A_xgb", "B_market_norm", "C_xgb"]
 # Liquidity buckets as experiment.run labels them, tightest spread first.
 LIQUIDITY_ORDER = ["spread<=2c", "2-5c", ">5c", "stale/no quote"]
+LIQUIDITY_LABELS = {
+    "spread<=2c": "Spread ≤ 2¢",
+    "2-5c": "Spread 2–5¢",
+    ">5c": "Spread > 5¢",
+    "stale/no quote": "Stale or no quote",
+}
 # The probabilities experiment.run passes to the encompassing regression.
 ENCOMPASSING_MODELS = {"weather": "A_logit", "market": "B_market_norm"}
 
@@ -66,6 +72,8 @@ shared.page_header(
 
 
 def p_text(p: float) -> str:
+    if pd.isna(p):
+        return "n/a"
     return "< 0.001" if p < 0.001 else f"{p:.3f}"
 
 
@@ -82,7 +90,7 @@ with shared.guarded():
     split, manifest = evidence["split"], evidence["manifest"]
     test = split["test"]
     st.caption(
-        f"Test period {test['dates'][0]} to {test['dates'][1]}: {test['events']} days, "
+        f"Test period {test['dates'][0]} to {test['dates'][1]}: {test['events']} city-days, "
         f"{test['rows']:,} contract snapshots."
     )
 
@@ -120,8 +128,10 @@ with shared.guarded():
     st.subheader("Encompassing regression")
     enc = evidence["encompassing"].reindex(list(ENCOMPASSING_TERMS))
     weather_p = float(enc.loc["logit_weather", "p_value"])
-    p_short = "< 0.01" if weather_p < 0.01 else f"= {weather_p:.2f}"
-    if weather_p < 0.05:  # the sentence must follow the data, whichever way it comes out
+    p_short = p_text(weather_p) if weather_p < 0.001 else f"= {p_text(weather_p)}"
+    if pd.isna(weather_p):
+        weather_reading = "has no p-value in the results"
+    elif weather_p < 0.05:  # the sentence must follow the data, whichever way it comes out
         weather_reading = f"is clearly different from zero (p {p_short})"
     else:
         weather_reading = (
@@ -153,21 +163,26 @@ with shared.guarded():
         lines = [
             f"Data: {manifest['data_date_range'][0]} to {manifest['data_date_range'][1]}, "
             f"cities {', '.join(manifest['cities'])}.",
-            f"Training period: {train['dates'][0]} to {train['dates'][1]} ({train['events']} days).",
-            f"Test period: {test['dates'][0]} to {test['dates'][1]} ({test['events']} days).",
+            f"Training period: {train['dates'][0]} to {train['dates'][1]} ({train['events']} city-days).",
+            f"Test period: {test['dates'][0]} to {test['dates'][1]} ({test['events']} city-days).",
             f"Rows used: {split['rows_used']:,} of {split['rows_in']:,} snapshot rows "
             "(the others lack a complete forecast day, a quote or a settlement value).",
             f"Code: commit {manifest['git_commit'][:12]}, source tree {manifest['src_tree'][:12]}.",
             "Packages: " + ", ".join(f"{name} {version}" for name, version in manifest["packages"].items()) + ".",
         ]
-        quality = evidence["data_quality"]
-        if quality:
-            lines.append(
-                f"Data quality: bracket logic agrees with Kalshi for {quality['bracket_logic_matches_result']:.2%} "
-                f"of contracts, NOAA for {quality['noaa_outcome_matches_result']:.2%}; "
-                f"{quality['missing_forecast_rows']:,} rows without a complete forecast day; "
-                f"{quality['incomplete_bracket_rows']:,} rows with an incomplete bracket set."
-            )
+        quality = evidence["data_quality"] or {}
+        # Only the keys that are present: a data_quality.json from an older build lacks the newer ones.
+        clauses = []
+        if "bracket_logic_matches_result" in quality:
+            clauses.append(f"bracket logic agrees with Kalshi for {quality['bracket_logic_matches_result']:.2%}")
+        if "noaa_outcome_matches_result" in quality:
+            clauses.append(f"NOAA outcomes agree for {quality['noaa_outcome_matches_result']:.2%}")
+        if "missing_forecast_rows" in quality:
+            clauses.append(f"{quality['missing_forecast_rows']:,} rows without a complete forecast day")
+        if "incomplete_bracket_rows" in quality:
+            clauses.append(f"{quality['incomplete_bracket_rows']:,} rows with an incomplete bracket set")
+        if clauses:
+            lines.append("Data quality: " + "; ".join(clauses) + ".")
         st.markdown("\n".join(f"- {line}" for line in lines))
 
     st.subheader("Calibration")
@@ -210,6 +225,7 @@ with shared.guarded():
         liquidity = robustness[robustness["cut"] == "liquidity"]
         rank = {label: i for i, label in enumerate(LIQUIDITY_ORDER)}
         liquidity = liquidity.sort_values("liquidity", key=lambda s: s.map(rank).fillna(len(rank)), kind="stable")
+        liquidity = liquidity.assign(liquidity=liquidity["liquidity"].map(lambda b: LIQUIDITY_LABELS.get(b, b)))
         st.dataframe(brier_table(liquidity, "liquidity", "Liquidity"), hide_index=True)
         sources = robustness[robustness["cut"] == "settle_source"]
         st.dataframe(brier_table(sources, "settle_source", "Settlement source"), hide_index=True)
