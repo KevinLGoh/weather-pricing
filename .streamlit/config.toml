@@ -1,0 +1,5 @@
+# Local settings. Streamlit Community Cloud overrides showErrorDetails, so the app's own
+# error handling (shared.guarded) is what keeps stack traces out of the browser.
+[client]
+showErrorDetails = "none"
+toolbarMode = "minimal"

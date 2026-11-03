@@ -246,6 +246,19 @@ def test_missing_artifacts_folder_names_the_build_command(tmp_path, monkeypatch)
     assert issubclass(inference.ArtifactsMissingError, inference.InferenceError)
 
 
+def test_set_artifacts_dir_overrides_the_default(tmp_path, monkeypatch):
+    _write_artifacts(tmp_path / "chosen")
+    _use(monkeypatch, tmp_path / "missing")
+    try:
+        inference.set_artifacts_dir(tmp_path / "chosen")
+        assert inference.list_cities() == ["NY"]
+        inference.set_artifacts_dir(None)
+        with pytest.raises(inference.ArtifactsMissingError):
+            inference.list_cities()
+    finally:
+        inference.set_artifacts_dir(None)
+
+
 def test_predictions_missing_a_column_raises_artifacts_missing(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch, drop=("mid",))
     with pytest.raises(inference.ArtifactsMissingError, match="mid"):

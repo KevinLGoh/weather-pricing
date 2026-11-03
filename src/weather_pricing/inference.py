@@ -104,8 +104,19 @@ def clear_cache() -> None:
     _load_evidence.cache_clear()
 
 
+_artifacts_dir: Path | None = None  # set by the app; None means artifacts.ARTIFACTS_DIR
+
+
+def set_artifacts_dir(path: Path | str | None) -> None:
+    """Use `path` as the artifacts folder (the app passes the folder next to itself, so
+    it works however the package is installed). None returns to the default."""
+    global _artifacts_dir
+    _artifacts_dir = None if path is None else Path(path)
+
+
 def _artifacts() -> dict:
-    return _load(str(artifacts.ARTIFACTS_DIR))
+    # Caches are keyed by the folder string, so switching folders needs no cache clear.
+    return _load(str(_artifacts_dir or artifacts.ARTIFACTS_DIR))
 
 
 def _parse_date(value) -> date:
