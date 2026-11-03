@@ -1,14 +1,16 @@
 """Synthetic end-to-end check: if quotes carry information the forecast lacks, C beats A."""
 
+import warnings
 from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
+import pytest
 from scipy.stats import norm
 
 from weather_pricing import evaluate as ev
 from weather_pricing.experiment import chronological_split
-from weather_pricing.models import fit_predict
+from weather_pricing.models import GaussianRule, fit_predict, weather_features
 
 
 def synthetic(n_days=500, seed=0):
@@ -47,3 +49,14 @@ def test_combined_beats_weather_only_when_market_is_informed():
     assert ev.brier(y, preds["C_xgb"]) < ev.brier(y, preds["A_xgb"])
     # The rule baseline should be a sensible probability model, not noise.
     assert ev.brier(y, preds["R_gaussian_rule"]) < ev.brier(y, np.full(len(y), y.mean()))
+
+
+def test_weather_features_emits_no_deprecation_warning():
+    df = synthetic(n_days=10)
+    rule = GaussianRule().fit(df)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        warnings.simplefilter("error", FutureWarning)
+        features = weather_features(df, rule)
+    # The first row has target_date 2024-01-01, which is day 1 of the year.
+    assert features["doy_sin"].iloc[0] == pytest.approx(np.sin(2 * np.pi * 1 / 365.25))

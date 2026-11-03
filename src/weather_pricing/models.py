@@ -59,7 +59,7 @@ class GaussianRule:
 
 def weather_features(df: pd.DataFrame, rule: GaussianRule) -> pd.DataFrame:
     mu, sigma = rule.mu_sigma(df)
-    doy = pd.to_datetime(df["target_date"]).dt.dayofyear.to_numpy()
+    doy = pd.to_datetime(df["target_date"]).dt.day_of_year.to_numpy()
     return pd.DataFrame(
         {
             "logit_gauss": logit(rule.predict(df)),
