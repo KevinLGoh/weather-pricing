@@ -252,6 +252,86 @@ def test_predictions_missing_a_column_raises_artifacts_missing(tmp_path, monkeyp
         inference.list_cities()
 
 
+RAW_ERROR_WORDS = [
+    "ArrowInvalid",
+    "JSONDecodeError",
+    "ValueError",
+    "DateParseError",
+    "EmptyDataError",
+    "FileNotFoundError",
+    "Errno",
+    "Traceback",
+]
+
+
+def _assert_readable(error, folder, file_name):
+    """Plain-words message; the folder path is removed first so tmp_path names cannot match."""
+    message = str(error).replace(str(folder), "<folder>")
+    if error.__cause__ is not None:
+        assert str(error.__cause__).replace(str(folder), "<folder>") not in message, message
+    assert "evaluate --save-artifacts" in message, message
+    assert file_name in message, message
+    assert "damaged" in message, message
+    for word in RAW_ERROR_WORDS:
+        assert word not in message, (word, message)
+
+
+def _junk_predictions(folder):
+    (folder / "predictions.parquet").write_bytes(b"not a parquet file")
+
+
+def _delete_manifest(folder):
+    (folder / "manifest.json").unlink()
+
+
+def _truncated_manifest(folder):
+    (folder / "manifest.json").write_text("{")
+
+
+def _manifest_not_an_object(folder):
+    (folder / "manifest.json").write_text("[]")
+
+
+def _unparseable_dates(folder):
+    df = pd.read_parquet(folder / "predictions.parquet")
+    df["target_date"] = "not-a-date"
+    df.to_parquet(folder / "predictions.parquet", index=False)
+
+
+def test_damaged_artifacts_raise_artifacts_missing(tmp_path, monkeypatch):
+    cases = [
+        ("predictions.parquet", _junk_predictions),
+        ("manifest.json", _delete_manifest),
+        ("manifest.json", _truncated_manifest),
+        ("manifest.json", _manifest_not_an_object),
+        ("predictions.parquet", _unparseable_dates),
+    ]
+    for file_name, damage in cases:
+        folder = _write_artifacts(tmp_path / damage.__name__)
+        damage(folder)
+        _use(monkeypatch, folder)
+        with pytest.raises(inference.ArtifactsMissingError) as info:
+            inference.list_cities()
+        _assert_readable(info.value, folder, file_name)
+
+
+def test_failure_is_not_cached_so_a_retry_works(tmp_path, monkeypatch):
+    folder = tmp_path / "app_artifacts"
+    _use(monkeypatch, folder)
+    with pytest.raises(inference.ArtifactsMissingError):
+        inference.list_cities()
+    _write_artifacts(folder)
+    assert inference.list_cities() == ["NY"]
+
+
+def test_damaged_results_file_raises_artifacts_missing(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    (tmp_path / "app_artifacts" / "bootstrap.csv").write_bytes(b"")
+    with pytest.raises(inference.ArtifactsMissingError) as info:
+        inference.load_evidence()
+    _assert_readable(info.value, tmp_path / "app_artifacts", "bootstrap.csv")
+
+
 def test_artifacts_are_read_once_and_cached(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     real = pd.read_parquet
@@ -335,12 +415,59 @@ def test_price_note_without_rate_in_manifest_raises_artifacts_missing(tmp_path, 
     path = tmp_path / "app_artifacts" / "manifest.json"
     manifest = json.loads(path.read_text())
     without_rate = {k: v for k, v in manifest["settings"].items() if k != "rate"}
-    for settings in [without_rate, {**manifest["settings"], "rate": "four"}]:
+    cases = [
+        without_rate,
+        {**manifest["settings"], "rate": "four"},
+        {**manifest["settings"], "rate": math.nan},  # json writes NaN
+        {**manifest["settings"], "rate": math.inf},  # json writes Infinity
+        None,
+    ]
+    for settings in cases:
         path.write_text(json.dumps({**manifest, "settings": settings}))
         inference.clear_cache()
         with pytest.raises(inference.ArtifactsMissingError) as info:
             inference.price_note(**inputs)
         assert "evaluate --save-artifacts" in str(info.value), settings
+
+
+def test_price_note_rejects_unknown_model_and_bools(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    inputs = _note_inputs()
+    cases = [
+        ("probabilities", {"probabilities": {"nope": 0.5}, "baseline": "nope"}),
+        ("principal", {"principal": True}),
+    ]
+    for name, change in cases:
+        with pytest.raises(inference.InvalidInputError) as info:
+            inference.price_note(**{**inputs, **change})
+        assert name in str(info.value), (name, change)
+
+
+def test_price_note_accepts_numpy_numbers(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    inputs = _note_inputs()
+    plain = inference.price_note(**{**inputs, "lead_hours": 34.0})
+    numpy_inputs = {
+        **inputs,
+        "principal": np.float64(1000.0),
+        "coupon": np.int64(20),
+        "lam": np.float64(0.25),
+        "lead_hours": np.float64(34.0),
+    }
+    df = inference.price_note(**numpy_inputs)
+    assert isinstance(df, pd.DataFrame)
+    assert list(df["model"]) == list(plain["model"])
+    assert np.isclose(df["value"], plain["value"]).all()
+
+
+def test_invalid_input_messages_are_readable(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    inputs = _note_inputs()
+    with pytest.raises(inference.InvalidInputError) as info:
+        inference.price_note(**{**inputs, "principal": float("inf")})
+    message = str(info.value)
+    assert "1,000,000,000" in message, message
+    assert "e+" not in message, message
 
 
 def test_load_evidence_returns_tables_and_dicts(tmp_path, monkeypatch):

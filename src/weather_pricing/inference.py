@@ -56,6 +56,19 @@ class DataNotFoundError(InferenceError):
     pass
 
 
+# What reading a damaged file can raise: OS errors, bad JSON/CSV/dates (ValueError), and
+# pyarrow's ArrowTypeError / ArrowNotImplementedError.
+READ_ERRORS = (OSError, ValueError, TypeError, NotImplementedError)
+
+
+def _unreadable(name: str, folder: Path) -> ArtifactsMissingError:
+    """Plain-words error for a file that cannot be used; the cause is chained, not shown."""
+    return ArtifactsMissingError(
+        f"{name} in {folder} is missing, damaged or from another version. "
+        f"Rebuild the artifacts with: {BUILD_COMMAND}"
+    )
+
+
 @functools.lru_cache(maxsize=2)
 def _load(folder: str) -> dict:
     """Read the artifacts once per folder. Failures are not cached, so a retry after
@@ -65,16 +78,24 @@ def _load(folder: str) -> dict:
         raise ArtifactsMissingError(f"No app artifacts found in {path}. Build them with: {BUILD_COMMAND}")
     try:
         predictions = pd.read_parquet(path / "predictions.parquet")
-        manifest = json.loads((path / "manifest.json").read_text())
-    except (OSError, ValueError) as e:
-        raise ArtifactsMissingError(f"Could not read the app artifacts in {path} ({e}). Rebuild them with: {BUILD_COMMAND}") from e
+    except READ_ERRORS as e:
+        raise _unreadable("predictions.parquet", path) from e
     missing = [c for c in APP_COLUMNS + MAIN if c not in predictions.columns]
     if missing:
         raise ArtifactsMissingError(
             f"predictions.parquet lacks the columns {', '.join(missing)}; it was built by an older version. "
             f"Rebuild it with: {BUILD_COMMAND}"
         )
-    predictions["target_date"] = pd.to_datetime(predictions["target_date"]).dt.date
+    try:
+        predictions["target_date"] = pd.to_datetime(predictions["target_date"]).dt.date
+    except READ_ERRORS as e:
+        raise _unreadable("predictions.parquet", path) from e
+    try:
+        manifest = json.loads((path / "manifest.json").read_text())
+    except READ_ERRORS as e:
+        raise _unreadable("manifest.json", path) from e
+    if not isinstance(manifest, dict):
+        raise _unreadable("manifest.json", path)
     return {"predictions": predictions, "manifest": manifest, "folder": path}
 
 
@@ -201,9 +222,14 @@ def _number(name: str, value, lo: float, hi: float, lo_open: bool = False) -> fl
         raise InvalidInputError(f"{name} must be a number, not {value!r}.")
     x = float(value)
     if not math.isfinite(x) or x > hi or x < lo or (lo_open and x == lo):
-        low = f"above {lo:g}" if lo_open else f"at least {lo:g}"
-        raise InvalidInputError(f"{name} must be a finite number {low} and at most {hi:g}; got {value!r}.")
+        low = f"above {_readable(lo)}" if lo_open else f"at least {_readable(lo)}"
+        raise InvalidInputError(f"{name} must be a finite number {low} and at most {_readable(hi)}; got {value!r}.")
     return x
+
+
+def _readable(x: float) -> str:
+    """1e9 -> '1,000,000,000'; 0.5 -> '0.5' (never scientific notation for limits)."""
+    return f"{x:,.0f}" if float(x).is_integer() else f"{x:,}"
 
 
 def _family_of(model: str) -> str | None:
@@ -240,8 +266,9 @@ def price_note(
     )
     lam = _number("lam", lam, -2.0, 2.0)
     years = val.horizon_years(_number("lead_hours", lead_hours, 0.0, 1e4))
-    rate = _artifacts()["manifest"].get("settings", {}).get("rate")
-    if isinstance(rate, bool) or not isinstance(rate, numbers.Real):
+    settings = _artifacts()["manifest"].get("settings")
+    rate = settings.get("rate") if isinstance(settings, dict) else None
+    if isinstance(rate, bool) or not isinstance(rate, numbers.Real) or not math.isfinite(rate):
         raise ArtifactsMissingError(
             f"manifest.json has no valid interest rate (settings.rate = {rate!r}). Rebuild the artifacts with: {BUILD_COMMAND}"
         )
@@ -273,19 +300,21 @@ EVIDENCE_JSON = ["valuation.json", "split.json"]
 def _load_evidence(folder: str) -> dict:
     path = Path(folder)
     out: dict = {}
-    try:
-        for name, index_col in EVIDENCE_TABLES.items():
+    for name, index_col in EVIDENCE_TABLES.items():
+        try:
             out[name.removesuffix(".csv")] = pd.read_csv(path / name, index_col=index_col)
-        for name in EVIDENCE_JSON:
+        except READ_ERRORS as e:
+            raise _unreadable(name, path) from e
+    for name in EVIDENCE_JSON:
+        try:
             out[name.removesuffix(".json")] = json.loads((path / name).read_text())
-        dq = path / "data_quality.json"
+        except READ_ERRORS as e:
+            raise _unreadable(name, path) from e
+    dq = path / "data_quality.json"
+    try:
         out["data_quality"] = json.loads(dq.read_text()) if dq.exists() else None
-    except FileNotFoundError as e:
-        raise ArtifactsMissingError(
-            f"{Path(e.filename).name} is missing from {path}. Rebuild the artifacts with: {BUILD_COMMAND}"
-        ) from e
-    except (OSError, ValueError) as e:
-        raise ArtifactsMissingError(f"Could not read the results in {path} ({e}). Rebuild them with: {BUILD_COMMAND}") from e
+    except READ_ERRORS as e:
+        raise _unreadable(dq.name, path) from e
     return out
 
 
