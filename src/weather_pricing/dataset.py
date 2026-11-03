@@ -30,7 +30,9 @@ def snapshot_time(target: date, days_before: int, hour: int, tz: str) -> pd.Time
 
 def local_day_bounds(target: date, tz: str) -> tuple[pd.Timestamp, pd.Timestamp]:
     start = pd.Timestamp(datetime.combine(target, datetime.min.time()), tz=tz)
-    return start.tz_convert("UTC"), (start + pd.Timedelta(days=1)).tz_convert("UTC")
+    # Next local midnight, not start + 24h: DST days have 23 or 25 hours.
+    end = pd.Timestamp(datetime.combine(target + timedelta(days=1), datetime.min.time()), tz=tz)
+    return start.tz_convert("UTC"), end.tz_convert("UTC")
 
 
 def forecast_tmax(fc: pd.DataFrame, target: date, tz: str, snap: pd.Timestamp, extra_lag: int = 0) -> tuple[float, float]:
@@ -45,7 +47,8 @@ def forecast_tmax(fc: pd.DataFrame, target: date, tz: str, snap: pd.Timestamp, e
     """
     start, end = local_day_bounds(target, tz)
     hours = fc.loc[(fc.index >= start) & (fc.index < end)]
-    if len(hours) < 20:
+    # Every hour of the local day must be present (23 or 25 hours on DST change days).
+    if len(hours) != (end - start) // pd.Timedelta(hours=1):
         return math.nan, math.nan
     gap_h = (hours.index - snap).total_seconds().to_numpy() / 3600 + NWP_AVAILABILITY_HOURS
     need = np.maximum(1, np.ceil(gap_h / 24).astype(int)) + extra_lag
@@ -172,15 +175,41 @@ def build_city(city: City, start: date, end: date | None = None, progress: bool 
     df = pd.DataFrame(rows)
     if df.empty:
         return df
+    return add_market_columns(df)
+
+
+def _brackets_tile(g: pd.DataFrame) -> bool:
+    """True if the quoted contracts cover every temperature exactly once: one low tail,
+    one high tail and contiguous whole-degree brackets between them, all with a mid."""
+    if g["mid"].isna().any():
+        return False
+    g = g.sort_values("low")
+    low, high = g["low"].to_numpy(), g["high"].to_numpy()
+    return bool(
+        low[0] == -math.inf
+        and high[-1] == math.inf
+        and np.isinf(low).sum() == 1
+        and np.isinf(high).sum() == 1
+        and np.array_equal(low[1:], high[:-1] + 1)
+    )
+
+
+def add_market_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Renormalised mids and staleness flags for rows of contracts at snapshots."""
+    key = ["event_ticker", "snapshot"]
+    complete = df.groupby(key)[["low", "high", "mid"]].apply(_brackets_tile).rename("brackets_complete")
+    df = df.join(complete, on=key)
     # When an event's contracts partition the temperature line (a low tail, a high tail and
     # brackets between), their mids should sum to ~1 and can be renormalised. Early events
-    # were threshold ladders instead, where that sum means nothing.
+    # were threshold ladders instead, where that sum means nothing. A partition is only
+    # renormalised at a snapshot where every bracket is quoted; otherwise the raw mid is kept.
     kinds = df.groupby("event_ticker")["strike_type"].agg(set)
     partition = kinds.map(lambda k: {"less", "greater", "between"} <= k)
     df["partition_event"] = df["event_ticker"].map(partition)
-    total = df.groupby(["event_ticker", "snapshot"])["mid"].transform("sum")
-    df["event_mid_sum"] = total.where(df["partition_event"])
-    df["mid_norm"] = (df["mid"] / total).where(df["partition_event"], df["mid"])
+    renorm = df["partition_event"] & df["brackets_complete"]
+    total = df.groupby(key)["mid"].transform("sum")
+    df["event_mid_sum"] = total.where(renorm)
+    df["mid_norm"] = (df["mid"] / total).where(renorm, df["mid"])
     df["stale"] = (df["hours_since_trade"] > STALE_HOURS) | df["spread"].isna()
     return df
 
@@ -224,5 +253,6 @@ def quality_report(df: pd.DataFrame) -> dict:
         },
         "missing_forecast_rows": int(df["fc_tmax"].isna().sum()),
         "stale_rows": int(df["stale"].sum()),
+        "incomplete_bracket_rows": int((df["partition_event"] & ~df["brackets_complete"]).sum()),
         "event_mid_sum_median": float(df["event_mid_sum"].median()),
     }
