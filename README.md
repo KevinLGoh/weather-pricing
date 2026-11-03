@@ -140,48 +140,52 @@ differences are approximately N·L·Δp.
 
 ## Results
 
-These results are from the first run, with New York data only. The command was
+These results are from the reproduced run of 2026-11-04, with New York data only (see
+"Reproduction" below for the differences from the first run). The command was
 `python -m weather_pricing.cli evaluate` with default settings. `results/summary.md` has
 the full tables.
 
-**Sample.** The sample has 1,398 city-days and 8,385 contracts, in 33,401 snapshot rows.
-The data quality is good:
+**Sample.** The sample has 1,401 city-days and 8,403 contracts, in 33,473 snapshot rows
+(2023-01-01 to 2026-11-02). 32,951 rows are used; the other 522 lack a complete day of
+forecast hours. The data quality is good:
 
 - The bracket logic gives the same result as Kalshi for 100% of contracts.
 - NOAA TMAX gives the same outcome for 99.98% of contracts.
 - The rule text and the strikes agree for all contracts.
+- 40 rows (0.1%) belong to an event whose brackets were not all quoted at that snapshot;
+  they keep the raw mid instead of the renormalised one.
 
-**Split.** The training set has 963 city-days (2023-01 to 2025-09). The test set has 413
-city-days (2025-09 to 2026-10), in 9,894 rows.
+**Split.** The training set has 965 city-days (2023-01-01 to 2025-09-14), in 23,033 rows.
+The test set has 414 city-days (2025-09-15 to 2026-11-02), in 9,918 rows.
 
 | Model | Brier | Log loss | ECE |
 |---|---|---|---|
-| Rule-based Gaussian | 0.1441 | 0.463 | 0.055 |
-| A: weather-only, logistic | 0.1344 | 0.433 | 0.014 |
-| A: weather-only, XGBoost | 0.1274 | 0.409 | 0.013 |
-| B: market mid, renormalised | **0.0942** | 0.293 | 0.016 |
-| C: combined, logistic | 0.0955 | 0.296 | 0.022 |
-| C: combined, XGBoost | 0.0943 | **0.292** | **0.011** |
+| Rule-based Gaussian | 0.1437 | 0.462 | 0.054 |
+| A: weather-only, logistic | 0.1345 | 0.434 | 0.015 |
+| A: weather-only, XGBoost | 0.1278 | 0.412 | 0.018 |
+| B: market mid, renormalised | **0.0941** | **0.293** | 0.015 |
+| C: combined, logistic | 0.0954 | 0.296 | 0.022 |
+| C: combined, XGBoost | 0.0950 | **0.293** | **0.013** |
 
 1. **Market prices add much information to the weather model.** With XGBoost, the change
    from A to C decreases the Brier score by 0.033 (26%). The event-clustered 95% CI is
-   0.028 to 0.038, and p < 0.001. The gain occurs at all snapshot times. At D-1 14:00,
-   approximately 34 hours before the day ends, the market score is 0.110. The weather
-   model score is 0.131.
+   0.028 to 0.037, and p < 0.001. The gain occurs at all snapshot times. At D-1 14:00,
+   approximately 34 hours before the day ends, the market score is 0.109. The weather
+   model score is 0.132.
 2. **The weather model adds no information to market prices.** For C_xgb against B, the
-   Brier difference is −0.0001 (CI −0.001 to 0.001). C_logit is slightly *worse* than the
-   raw market.
+   Brier difference is −0.0009 (CI −0.0024 to 0.0005, p = 0.20): C_xgb is not better than
+   the market. C_logit is *worse* than the market (−0.0013, CI −0.0021 to −0.0005).
 3. **The market prices contain the information in the forecast.** In the encompassing
-   regression, the market coefficient is 1.22 (SE 0.06). The weather coefficient is −0.13
-   (p = 0.15). A market coefficient above 1 shows that the quotes are slightly too close
+   regression, the market coefficient is 1.22 (SE 0.06). The weather coefficient is −0.14
+   (p = 0.12). A market coefficient above 1 shows that the quotes are slightly too close
    to 50%. But the recalibrated `B_logit` model did not get an out-of-sample gain from
    this.
 4. **The result is robust.** It is true for all liquidity buckets and for both settlement
-   sources. The gain is larger with The Weather Company (0.048) than with NWS (0.030). But
-   the test set has only 78 days with The Weather Company as the source.
-5. **Valuation.** When the note uses Model C instead of Model A, its value changes by $62
-   on average. The 90th percentile is $138 per $1,000. The RMSE against the realised
-   payoff decreases from $178 to $153. A Wang loading of λ = 0.25 decreases the mean value
+   sources. The gain is larger with The Weather Company (0.050) than with NWS (0.029). But
+   the test set has only 81 days with The Weather Company as the source.
+5. **Valuation.** When the note uses Model C instead of Model A, its value changes by $63
+   on average. The 90th percentile is $143 per $1,000. The RMSE against the realised
+   payoff decreases from $179 to $154. A Wang loading of λ = 0.25 decreases the mean value
    by approximately $23. This is the same order as the gain from better forecasts. Thus,
    the risk-premium assumption is approximately as important as the source of the
    probability.
@@ -196,6 +200,28 @@ Thus, the data supports this claim: *Kalshi prices contain all the information i
 public deterministic NWP forecast for this type of event.* The data does not support the
 claim that prediction markets are better than meteorology. The next test is a stronger
 weather model with ensemble spread, NBM and intraday observations up to the snapshot.
+
+### Reproduction (2026-11-04)
+
+The data was downloaded again and the evaluation rerun with default settings
+(`build --cities NY --start 2023-01-01`, then `evaluate`). All conclusions of the first
+run hold. The differences:
+
+- **More data.** The data now ends on 2026-11-02, so there are 3 more city-days
+  (1,401 instead of 1,398), and the train/test cut moved slightly (965/414 instead of
+  963/413 city-days).
+- **Stricter forecast rule.** A row now needs every forecast hour of the local day,
+  including 23- and 25-hour days at the DST changes (before: at least 20 hours).
+- **Bracket check.** Quotes are renormalised only when every bracket of the event is
+  quoted at that snapshot. This affects 40 rows.
+- **Scores** move by at most 0.0007 (Brier) and 0.005 (ECE).
+- **Weather added to the market** (finding 2): the CI is wider than in the first run,
+  and C_xgb is now slightly, not significantly, worse than the market. C_logit is
+  significantly worse.
+- **Renormalising quotes** makes no difference: the raw mid (`B_market_mid`, Brier
+  0.0940) and the renormalised mid score the same (p = 0.56).
+- The separate effect of the two rule changes was not measured: that would need a build
+  with the old code.
 
 ## Limitations
 
