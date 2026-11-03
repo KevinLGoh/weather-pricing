@@ -82,3 +82,6 @@ with shared.guarded():
     settled = "unknown" if outcome["settled_value"] is None else f"{outcome['settled_value']:.0f}°F"
     paid = "Yes" if outcome["y"] else "No"
     (st.success if outcome["y"] else st.info)(f"Outcome: the daily high was {settled}, so this contract paid {paid}.")
+
+if st.button("Price this contract", type="primary"):
+    st.switch_page("note_pricer.py")

@@ -73,6 +73,19 @@ def guarded(message: str = "Loading…"):
         st.stop()
 
 
+def comparison_sentence(change: float, baseline_label: str) -> str:
+    """The Note Pricer's one-line comparison of the combined XGBoost model with the baseline.
+
+    Below half a cent the change shows as $0.00 in the table, so the sentence says "the
+    same" instead of "$0.00 less". Dollars are escaped for Streamlit Markdown.
+    """
+    start = "Under the combined XGBoost model the note is worth"
+    if abs(change) < 0.005:
+        return f"{start} the same as under the baseline ({baseline_label})."
+    direction = "more" if change > 0 else "less"
+    return f"{start} \\${abs(change):,.2f} {direction} than under the baseline ({baseline_label})."
+
+
 ATTRIBUTION = """
 ---
 **Data sources.** Market data: Kalshi public market data (contract terms, quotes and

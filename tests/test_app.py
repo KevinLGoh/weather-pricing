@@ -12,11 +12,12 @@ import pytest
 pytest.importorskip("streamlit")
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
+from streamlit.testing.v1.element_tree import Block  # noqa: E402
 
 from weather_pricing import artifacts, experiment, inference  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
-PAGES = ["contract_explorer.py"]
+PAGES = ["contract_explorer.py", "note_pricer.py"]
 
 DAY1, DAY2 = date(2026, 1, 2), date(2026, 1, 3)
 SNAPS = {"D-0 08:00": 16.0, "D-1 14:00": 34.0}  # snapshot -> lead_hours (D-0 first on purpose)
@@ -129,6 +130,60 @@ def _assert_no_unescaped_dollar_pairs(at):
         for e in kind:
             count = len(re.findall(r"(?<!\\)\$", e.value))
             assert count <= 1, f"{count} unescaped '$' in: {e.value!r}"
+
+
+# A contract of the synthetic data that is not the explorer's default choice.
+SELECTION = {"city": "NY", "date": DAY1.isoformat(), "snapshot": "D-0 08:00", "ticker": f"{_event(DAY1)}-B69.5"}
+LAMBDA_CAPTION = (
+    "λ is illustrative: a Wang-transform risk loading chosen for this example, not calibrated to any market."
+)
+COMBINED_SENTENCE = "Under the combined XGBoost model the note is worth"
+
+
+def _note_pricer(tmp_path, monkeypatch, selection=True):
+    """AppTest on the Note Pricer page, with SELECTION (or the given dict) in the session, or no selection."""
+    at = _app(tmp_path, monkeypatch)
+    at.run()  # the explorer stores its own default choice first
+    if isinstance(selection, dict):
+        at.session_state["selection"] = dict(selection)
+    elif selection:
+        at.session_state["selection"] = dict(SELECTION)
+    else:
+        del at.session_state["selection"]
+    at.switch_page("note_pricer.py").run()
+    return at
+
+
+def _widget(widgets, text):
+    return next(w for w in widgets if text in w.label)
+
+
+def _change(c):
+    return "$0.00" if abs(c) < 0.005 else f"{'+' if c > 0 else '-'}${abs(c):,.2f}"
+
+
+def _expected_prices(principal=1000.0, loss_fraction=0.5, coupon=0.0, lam=0.0, baseline="A_xgb"):
+    """inference.price_note for SELECTION (call after at.run(), which points inference at the artifacts)."""
+    s = SELECTION
+    result = inference.predict(s["city"], s["date"], s["snapshot"], s["ticker"])
+    lead = result["contract"]["lead_hours"]
+    return inference.price_note(result["probabilities"], lead, principal, loss_fraction, coupon, lam, baseline=baseline)
+
+
+def _expected_table(shared, prices):
+    return {
+        "Model": [shared.MODEL_LABELS[m] for m in prices["model"]],
+        "Family": [shared.FAMILY_LABELS[f] for f in prices["family"]],
+        "Probability": [f"{p:.1%}" for p in prices["probability"]],
+        "Pricing probability": [f"{p:.1%}" for p in prices["pricing_probability"]],
+        "Value": [f"${v:,.2f}" for v in prices["value"]],
+        "Change vs baseline": [_change(c) for c in prices["change_vs_baseline"]],
+    }
+
+
+def _table(at):
+    assert len(at.dataframe) == 1
+    return at.dataframe[0].value.to_dict("list")
 
 
 def test_app_starts_without_exceptions(tmp_path, monkeypatch):
@@ -339,3 +394,152 @@ def test_explorer_stores_the_selection_for_the_note_pricer(tmp_path, monkeypatch
         "snapshot": "D-0 08:00",
         "ticker": f"{_event(DAY1)}-B71.5",
     }
+
+
+def test_note_pricer_without_a_selection_points_to_the_explorer(tmp_path, monkeypatch):
+    at = _note_pricer(tmp_path, monkeypatch, selection=False)
+    assert not at.exception
+    assert any("Pick a contract in the Contract Explorer first." in e.value for e in at.info)
+    assert any("Contract Explorer" in link.value for link in at.page_link)
+    assert not at.number_input
+    assert not at.dataframe
+
+
+def test_note_pricer_with_a_stored_choice_that_no_longer_exists_points_back_to_the_explorer(
+    tmp_path, monkeypatch
+):
+    gone = dict(SELECTION, ticker="KXHIGHNY-26JAN02-B99.5")  # not in the synthetic data
+    at = _note_pricer(tmp_path, monkeypatch, selection=gone)
+    assert not at.exception
+    assert any("no longer in the app's data" in e.value for e in at.info)
+    assert any("Contract Explorer" in link.value for link in at.page_link)
+    assert not at.number_input
+    assert not at.dataframe
+    assert not at.error
+
+
+def test_comparison_sentence_says_the_same_for_a_zero_change(monkeypatch):
+    shared = _shared(monkeypatch)
+    for change in (0.0, 0.004, -0.004):
+        sentence = shared.comparison_sentence(change, "Market mid, renormalised")
+        assert "the same as under the baseline (Market mid, renormalised)" in sentence, change
+        assert "0.00" not in sentence, change
+
+
+def test_comparison_sentence_names_more_or_less(monkeypatch):
+    shared = _shared(monkeypatch)
+    label = "Weather-only, XGBoost"
+    assert "\\$12.30 more than" in shared.comparison_sentence(12.3, label)
+    assert "\\$5.00 less than" in shared.comparison_sentence(-5, label)
+    assert "\\$1,234.50 more" in shared.comparison_sentence(1234.5, label)
+
+
+def test_note_pricer_values_the_selected_contract_with_every_model(tmp_path, monkeypatch):
+    at = _note_pricer(tmp_path, monkeypatch)
+    shared = _shared(monkeypatch)
+    assert not at.exception
+    principal = _widget(at.number_input, "Principal")
+    assert (principal.value, principal.min, principal.max) == (1000.0, 1, 1e9)
+    loss = _widget(at.slider, "Loss if the bracket happens (% of principal)")
+    assert (loss.value, loss.min, loss.max) == (50, 0, 100)
+    coupon = _widget(at.number_input, "Coupon")
+    assert (coupon.value, coupon.min, coupon.max) == (0.0, 0, 1e9)
+    lam = _widget(at.slider, "Risk loading λ")
+    assert (lam.value, lam.min, lam.max, lam.step) == (0.0, -1.0, 1.0, 0.05)
+    baseline = _selectbox(at, "Baseline model")
+    assert baseline.options == [shared.MODEL_LABELS[m] for m in experiment.MAIN]
+    assert baseline.value == "Weather-only, XGBoost"
+    # Summary line: city, date, snapshot and bracket of the selected contract.
+    assert any(all(w in t for w in ["NY", "2026-01-02", "D-0 08:00", "69–70°F"]) for t in _texts(at))
+    prices = _expected_prices()
+    expected = _expected_table(shared, prices)
+    table = _table(at)
+    assert list(table) == list(expected)
+    assert table == expected
+    assert table["Model"] == [shared.MODEL_LABELS[m] for m in experiment.MAIN]
+    assert len(at.get("vega_lite_chart")) == 1
+    change = prices.set_index("model")["change_vs_baseline"]["C_xgb"]
+    sentences = [m.value for m in at.markdown if m.value.startswith(COMBINED_SENTENCE)]
+    assert len(sentences) == 1
+    assert f"\\${abs(change):,.2f} {'more' if change > 0 else 'less'}" in sentences[0]
+
+
+def test_note_pricer_follows_changed_inputs(tmp_path, monkeypatch):
+    at = _note_pricer(tmp_path, monkeypatch)
+    shared = _shared(monkeypatch)
+    _widget(at.number_input, "Principal").set_value(2000.0)
+    _widget(at.slider, "Loss if the bracket happens").set_value(30)
+    _widget(at.number_input, "Coupon").set_value(10.0)
+    _widget(at.slider, "Risk loading λ").set_value(0.25)
+    at.run()
+    assert not at.exception
+    # The slider shows percent; the page passes percent / 100 as the loss fraction.
+    expected = _expected_table(shared, _expected_prices(2000, 0.3, 10, 0.25))
+    assert _table(at) == expected
+
+
+def test_note_pricer_describes_the_note_like_the_valuation(tmp_path, monkeypatch):
+    at = _note_pricer(tmp_path, monkeypatch)
+    assert not at.exception
+    text = "\n".join(m.value for m in at.markdown)
+    for words in [
+        "pays the principal plus the coupon",
+        "loses the loss fraction of the principal",
+        "the coupon is paid either way",
+        "present value",
+    ]:
+        assert words in text, words
+
+
+def test_note_pricer_labels_the_note_hypothetical_and_lambda_illustrative(tmp_path, monkeypatch):
+    at = _note_pricer(tmp_path, monkeypatch)
+    shared = _shared(monkeypatch)
+    assert not at.exception
+    assert any(shared.NOTICE in w.value and "hypothetical" in w.value for w in at.warning)
+    assert any(c.value == LAMBDA_CAPTION for c in at.caption)
+    # The caption comes right after the λ slider.
+    elements = [n for n in at.main if not isinstance(n, Block)]
+    i = next(i for i, n in enumerate(elements) if n.type == "slider" and "Risk loading λ" in n.label)
+    assert elements[i + 1].type == "caption" and elements[i + 1].value == LAMBDA_CAPTION
+
+
+def test_note_pricer_shows_the_change_against_the_chosen_baseline(tmp_path, monkeypatch):
+    at = _note_pricer(tmp_path, monkeypatch)
+    shared = _shared(monkeypatch)
+    _selectbox(at, "Baseline model").set_value("Market mid, renormalised").run()
+    assert not at.exception
+    table = _table(at)
+    changes = dict(zip(table["Model"], table["Change vs baseline"]))
+    assert changes["Market mid, renormalised"] == "$0.00"
+    values = _expected_prices(baseline="B_market_norm").set_index("model")["value"]
+    assert changes["Combined, XGBoost"] == _change(values["C_xgb"] - values["B_market_norm"])
+    assert table == _expected_table(shared, _expected_prices(baseline="B_market_norm"))
+    assert any(m.value.startswith(COMBINED_SENTENCE) for m in at.markdown)
+    # With the combined XGBoost model as the baseline there is nothing to compare.
+    _selectbox(at, "Baseline model").set_value("Combined, XGBoost").run()
+    assert not at.exception
+    assert not any(m.value.startswith(COMBINED_SENTENCE) for m in at.markdown)
+
+
+def test_note_pricer_has_no_unescaped_dollar_pairs(tmp_path, monkeypatch):
+    at = _note_pricer(tmp_path, monkeypatch)
+    _widget(at.number_input, "Principal").set_value(2500.0)
+    _widget(at.number_input, "Coupon").set_value(25.0)
+    at.run()
+    assert not at.exception
+    _assert_no_unescaped_dollar_pairs(at)
+    # Widget labels are Markdown too.
+    for widget in [*at.number_input, *at.slider, *at.selectbox]:
+        count = len(re.findall(r"(?<!\\)\$", widget.label))
+        assert count <= 1, f"{count} unescaped '$' in: {widget.label!r}"
+
+
+def test_explorer_button_opens_the_note_pricer(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch)
+    at.run()
+    assert not at.exception
+    selection = dict(at.session_state["selection"])
+    next(b for b in at.button if b.label == "Price this contract").click().run()
+    assert not at.exception
+    assert any(t.value == "Note Pricer" for t in at.title)
+    assert at.session_state["selection"] == selection
