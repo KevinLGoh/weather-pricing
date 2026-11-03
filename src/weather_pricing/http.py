@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -41,7 +42,10 @@ def get_json(
     params = {k: v for k, v in (params or {}).items() if v is not None}
     path = _cache_path(namespace, url, params)
     if use_cache and path.exists():
-        return json.loads(path.read_text())["body"]
+        try:
+            return json.loads(path.read_text())["body"]
+        except (json.JSONDecodeError, KeyError):
+            pass  # unreadable cache file (e.g. from an interrupted run): fetch it again
 
     for attempt in range(retries):
         # Reserve a send slot so concurrent callers stay under min_interval in aggregate.
@@ -61,6 +65,13 @@ def get_json(
         resp.raise_for_status()
         body = resp.json()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"url": url, "params": params, "fetched": time.time(), "body": body}))
+        # Write to a temp file and rename it into place, so an interrupted write never
+        # leaves a truncated cache file behind.
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            tmp.write_text(json.dumps({"url": url, "params": params, "fetched": time.time(), "body": body}))
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
         return body
     raise RuntimeError(f"GET failed after {retries} attempts: {url} {params}")
