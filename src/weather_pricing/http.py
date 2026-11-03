@@ -44,7 +44,7 @@ def get_json(
     if use_cache and path.exists():
         try:
             return json.loads(path.read_text())["body"]
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, TypeError):
             pass  # unreadable cache file (e.g. from an interrupted run): fetch it again
 
     for attempt in range(retries):

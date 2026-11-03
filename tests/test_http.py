@@ -67,3 +67,16 @@ def test_truncated_cache_file_is_refetched(monkeypatch, tmp_path):
     assert result == BODY
     assert len(calls) == 1
     assert json.loads(path.read_text())["body"] == BODY
+
+
+def test_cache_file_without_an_object_is_refetched(monkeypatch, tmp_path):
+    calls = fake_get(monkeypatch, tmp_path)
+    path = http._cache_path("not-an-object", URL, PARAMS)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[]")
+    result = http.get_json(URL, PARAMS, namespace="not-an-object", min_interval=0, use_cache=True)
+    assert result == BODY
+    assert len(calls) == 1
+    cached = json.loads(path.read_text())
+    assert isinstance(cached, dict)
+    assert cached["body"] == BODY

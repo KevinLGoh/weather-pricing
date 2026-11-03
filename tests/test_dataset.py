@@ -3,6 +3,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
+from weather_pricing import rules
 from weather_pricing.config import MAX_PREVIOUS_DAY, NWP_AVAILABILITY_HOURS
 from weather_pricing.dataset import (
     add_market_columns,
@@ -15,7 +16,9 @@ from weather_pricing.dataset import (
 
 TZ = "America/New_York"
 INF = float("inf")
-NY_SET = [("less", -INF, 68), ("between", 69, 70), ("between", 71, 72), ("greater", 73, INF)]
+# Real-shaped strikes: '<69', '69-70', '71-72', '>72' -> (-inf, 68), (69, 70), (71, 72), (73, inf).
+NY_STRIKES = [("less", None, 69), ("between", 69, 70), ("between", 71, 72), ("greater", 72, None)]
+NY_SET = [(s, *rules.bracket(s, floor, cap)) for s, floor, cap in NY_STRIKES]
 
 
 def _event(brackets, mids, snapshot="D 08:00", event="E1"):
@@ -143,7 +146,11 @@ def test_forecast_accepts_the_23_hour_spring_dst_day():
     fc = _fc("2026-03-04", days=8)
     target = date(2026, 3, 8)
     snap = snapshot_time(target, 1, 14, TZ)
-    assert not np.isnan(forecast_tmax(fc, target, TZ, snap)[0])
+    # 04:00 UTC Mar 9 is the next local midnight: outside the 23-hour day, inside start + 24h.
+    fc.loc[pd.Timestamp("2026-03-09 04:00", tz="UTC")] = 200.0
+    tmax, _ = forecast_tmax(fc, target, TZ, snap)
+    assert not np.isnan(tmax)
+    assert tmax < 200
 
 
 def test_market_state_ignores_unfinished_candles():
@@ -220,6 +227,16 @@ def test_completeness_is_checked_per_snapshot():
     assert np.allclose(before["mid_norm"], before["mid"])
 
 
+def test_duplicated_bracket_is_not_complete():
+    brackets = NY_SET + [("between", 69, 70)]
+    df = _event(brackets, [0.1, 0.3, 0.4, 0.3, 0.3])
+    df["ticker"] = ["T-LO", "T-69", "T-71", "T-HI", "T-69-DUP"]
+    out = add_market_columns(df)
+    assert not out["brackets_complete"].any()
+    assert out["event_mid_sum"].isna().all()
+    assert np.allclose(out["mid_norm"], out["mid"])
+
+
 def test_quality_report_counts_rows_contracts_and_events():
     report = quality_report(_report_frame())
     assert report["rows"] == 8
@@ -240,5 +257,13 @@ def test_quality_report_measures_agreement_with_noaa_and_settlement():
 
 
 def test_quality_report_counts_incomplete_bracket_rows():
-    report = quality_report(_report_frame())
+    df = _report_frame()
+    # A threshold ladder event is never a complete partition, but that is not a gap.
+    ladder = df[df["event_ticker"] == "A"].copy()
+    ladder["event_ticker"] = "L"
+    ladder["ticker"] = ladder["ticker"].str.replace("A-", "L-")
+    ladder["partition_event"] = False
+    ladder["brackets_complete"] = False
+    ladder["event_mid_sum"] = np.nan
+    report = quality_report(pd.concat([df, ladder], ignore_index=True))
     assert report["incomplete_bracket_rows"] == 2

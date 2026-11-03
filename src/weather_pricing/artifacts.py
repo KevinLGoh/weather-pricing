@@ -9,6 +9,7 @@ manifest records.
 from __future__ import annotations
 
 import json
+import os
 import pickle
 import platform
 import shutil
@@ -110,7 +111,14 @@ def save(out_dir: Path, models: dict, predictions: pd.DataFrame, results_dir: Pa
         "models": sorted(models),
         "files": sorted(files),
     }
-    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    # Temp file + rename, so a crash mid-write never leaves a truncated manifest.
+    path = out_dir / "manifest.json"
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(manifest, indent=2))
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
     return manifest
 
 

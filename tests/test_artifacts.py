@@ -143,6 +143,20 @@ def test_failed_save_leaves_no_stale_manifest(tmp_path, monkeypatch):
     assert not (out / "manifest.json").exists()
 
 
+def test_failed_manifest_write_leaves_no_partial_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifacts, "_git", _fake_git())
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(artifacts.os, "replace", boom)
+    out = tmp_path / "out"
+    with pytest.raises(OSError):
+        artifacts.save(out, MODELS, _predictions(), _results_dir(tmp_path), INFO)
+    assert not (out / "manifest.json").exists()
+    assert list(tmp_path.rglob("*.tmp")) == []
+
+
 def test_git_returns_unknown_on_nonzero_exit(monkeypatch):
     def failed(args, *rest, **kwargs):
         return subprocess.CompletedProcess(args, 128, "", "")
