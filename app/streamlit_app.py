@@ -17,6 +17,7 @@ page = st.navigation(
     [
         st.Page("contract_explorer.py", title="Contract Explorer", default=True),
         st.Page("note_pricer.py", title="Note Pricer"),
+        st.Page("model_evidence.py", title="Model Evidence"),
     ]
 )
 # Reserve the page area and draw the footer first: a page that stops on an error

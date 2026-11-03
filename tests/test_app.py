@@ -17,7 +17,7 @@ from streamlit.testing.v1.element_tree import Block  # noqa: E402
 from weather_pricing import artifacts, experiment, inference  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
-PAGES = ["contract_explorer.py", "note_pricer.py"]
+PAGES = ["contract_explorer.py", "note_pricer.py", "model_evidence.py"]
 
 DAY1, DAY2 = date(2026, 1, 2), date(2026, 1, 3)
 SNAPS = {"D-0 08:00": 16.0, "D-1 14:00": 34.0}  # snapshot -> lead_hours (D-0 first on purpose)
@@ -54,7 +54,140 @@ def _probability(m, b):
     return round(0.103 + 0.05 * m + 0.1 * b, 4)
 
 
-def _write_artifacts(folder):
+# Results files of the synthetic artifacts, in the formats experiment.run() writes.
+SCORES = {  # model -> (brier, log_loss, ece), for every model in experiment.MAIN
+    "R_gaussian_rule": (0.10412, 0.33871, 0.04129),
+    "A_logit": (0.09233, 0.30544, 0.02518),
+    "A_xgb": (0.08871, 0.29312, 0.02246),
+    "B_market_mid": (0.08127, 0.27455, 0.03384),
+    "B_market_norm": (0.07642, 0.25918, 0.01873),
+    "B_logit": (0.07598, 0.25703, 0.01412),
+    "C_logit": (0.07415, 0.25129, 0.01306),
+    "C_xgb": (0.07361, 0.24987, 0.01155),
+}
+# (baseline, challenger, question, diff, ci_lo, ci_hi, p_value, n_events); diff > 0: challenger better.
+BOOTSTRAP = [
+    ("A_logit", "C_logit", "Market data added to weather (logistic)", 0.01818, 0.01242, 0.02391, 0.0, 61),
+    ("A_xgb", "C_xgb", "Market data added to weather (XGBoost)", 0.0151, 0.00987, 0.02044, 0.0, 61),
+    ("B_market_norm", "C_logit", "Weather data added to market (logistic)", 0.00227, -0.00094, 0.00561, 0.197, 61),
+    ("B_market_norm", "C_xgb", "Weather data added to market (XGBoost)", 0.00281, -0.00031, 0.00602, 0.0884, 61),
+    ("A_xgb", "B_market_norm", "Market alone vs best weather-only", 0.01229, 0.00618, 0.01853, 0.0004, 61),
+    ("B_market_mid", "B_market_norm", "Renormalising quotes within an event", 0.00485, 0.00213, 0.00772, 0.0013, 61),
+]
+ENCOMPASSING = {  # term -> (coef, se, z, p_value, ci_lo, ci_hi)
+    "const": (-0.1184, 0.1452, -0.8154, 0.4148, -0.4030, 0.1662),
+    "logit_weather": (0.3127, 0.0911, 3.4325, 0.0006, 0.1341, 0.4913),
+    "logit_market": (0.8846, 0.0743, 11.9058, 0.0, 0.7390, 1.0302),
+}
+SPLIT = {
+    "rows_in": 1312,
+    "rows_used": 1240,
+    "train": {"rows": 980, "events": 48, "dates": ["2025-10-24", "2025-12-10"]},
+    "test": {"rows": 260, "events": 61, "dates": ["2025-12-11", DAY2.isoformat()]},
+    "test_base_rate": 0.1846,
+}
+DATA_QUALITY = {
+    "bracket_logic_matches_result": 0.9984,
+    "noaa_outcome_matches_result": 0.9921,
+    "missing_forecast_rows": 37,
+    "incomplete_bracket_rows": 12,
+}
+# Robustness cuts: (cut, key column, key, events, Brier of A_xgb, B_market_norm, C_logit, C_xgb).
+# The lead snapshots are written out of order so the page's ordering is tested.
+ROBUSTNESS = [
+    ("lead", "snapshot", "D-0 12:00", 58, (0.0712, 0.0598, 0.0591, 0.0589)),
+    ("lead", "snapshot", "D-1 14:00", 61, (0.0951, 0.0843, 0.0822, 0.0817)),
+    ("lead", "snapshot", "D-0 08:00", 60, (0.0834, 0.0702, 0.0688, 0.0684)),
+    ("lead", "snapshot", "D-1 22:00", 59, (0.0899, 0.0781, 0.0760, 0.0755)),
+    ("liquidity", "liquidity", "2-5c", 57, (0.0866, 0.0741, 0.0729, 0.0722)),
+    ("liquidity", "liquidity", "stale/no quote", 33, (0.1032, 0.0954, 0.0921, 0.0915)),
+    ("city", "city", "NY", 61, (0.0891, 0.0768, 0.0744, 0.0739)),
+    ("settle_source", "settle_source", "kalshi", 55, (0.0884, 0.0761, 0.0738, 0.0733)),
+    ("settle_source", "settle_source", "weather_company", 6, (0.0957, 0.0836, 0.0802, 0.0794)),
+]
+BRIER_COLUMNS = {  # robustness column -> page column
+    "A_xgb": "Weather-only, XGBoost",
+    "B_market_norm": "Market mid, renormalised",
+    "C_logit": "Combined, logistic",
+    "C_xgb": "Combined, XGBoost",
+    "A_minus_C_xgb": "Gain from adding the market (XGBoost)",
+}
+RELIABILITY_MODELS = ["A_xgb", "B_market_norm", "C_xgb"]
+
+
+def _robustness_rows():
+    rows = []
+    for cut, key, value, events, (a, b, c_logit, c_xgb) in ROBUSTNESS:
+        briers = {
+            "A_xgb": a,
+            "B_market_norm": b,
+            "C_logit": c_logit,
+            "C_xgb": c_xgb,
+            "A_minus_C_xgb": round(a - c_xgb, 4),
+        }
+        rows.append({key: value, "n": 4 * events, "events": events, **briers, "cut": cut})
+    return rows
+
+
+def _reliability_rows():
+    """Ten bins per model, with slightly different values per model."""
+    return [
+        {
+            "bin": b,
+            "n": 20 + b + m,
+            "mean_pred": round(0.05 + 0.1 * b + 0.002 * m, 4),
+            "obs_freq": round(0.04 + 0.1 * b + 0.003 * m, 4),
+            "bin_lo": 0.1 * b,
+            "model": model,
+        }
+        for m, model in enumerate(RELIABILITY_MODELS)
+        for b in range(10)
+    ]
+
+
+GIT_COMMIT = "3f9c2a1b7d4e5f60718293a4b5c6d7e8f9012345"
+SRC_TREE = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+
+
+def _write_results(folder, skip=()):
+    """The results files inference.load_evidence reads; names in `skip` are not written."""
+    scores = pd.DataFrame(
+        [{"model": m, "brier": b, "log_loss": ll, "ece": e} for m, (b, ll, e) in SCORES.items()]
+    ).set_index("model")
+    bootstrap = pd.DataFrame(
+        BOOTSTRAP,
+        columns=["baseline", "challenger", "question", "diff", "ci_lo", "ci_hi", "p_value", "n_events"],
+    )
+    encompassing = pd.DataFrame.from_dict(
+        ENCOMPASSING, orient="index", columns=["coef", "se", "z", "p_value", "ci_lo", "ci_hi"]
+    )
+    robustness = pd.DataFrame(_robustness_rows())
+    reliability = pd.DataFrame(_reliability_rows())
+    tables = {
+        "scores.csv": (scores, True),
+        "bootstrap.csv": (bootstrap, False),
+        "encompassing.csv": (encompassing, True),
+        "robustness.csv": (robustness, False),
+        "reliability.csv": (reliability, False),
+    }
+    for name, (df, index) in tables.items():
+        if name not in skip:
+            df.to_csv(folder / name, index=index)
+    valuation = {
+        "note": {"principal": 1000.0, "loss_fraction": 0.5, "coupon": 0.0},
+        "rate": 0.04,
+        "wang_lambda": 0.0,
+        "mean_abs_value_change_A_to_C": 21.84,
+        "mean_value": {"A_xgb": 912.37, "B_market_norm": 908.15, "C_xgb": 909.62},
+        "mean_realised": 907.69,
+    }
+    dicts = {"valuation.json": valuation, "split.json": SPLIT, "data_quality.json": DATA_QUALITY}
+    for name, content in dicts.items():
+        if name not in skip:
+            (folder / name).write_text(json.dumps(content))
+
+
+def _write_artifacts(folder, skip=()):
     rows = []
     for day in (DAY1, DAY2):
         event = _event(day)
@@ -90,10 +223,21 @@ def _write_artifacts(folder):
     df = pd.DataFrame(rows)[experiment.APP_COLUMNS + experiment.MAIN]
     folder.mkdir(parents=True, exist_ok=True)
     df.to_parquet(folder / "predictions.parquet", index=False)
+    _write_results(folder, skip)
     manifest = {
-        "settings": {"rate": 0.04, "test_frac": 0.3},
-        "test": {"dates": [DAY1.isoformat(), DAY2.isoformat()], "rows": len(df)},
+        "data_date_range": [SPLIT["train"]["dates"][0], SPLIT["test"]["dates"][1]],
         "cities": ["NY"],
+        "rows_in": SPLIT["rows_in"],
+        "rows_used": SPLIT["rows_used"],
+        "train": SPLIT["train"],
+        "test": SPLIT["test"],
+        "settings": {"test_frac": 0.3, "n_boot": 2000, "rate": 0.04, "wang_lambda": 0.0},
+        "git_commit": GIT_COMMIT,
+        "src_tree": SRC_TREE,
+        "git_dirty": False,
+        "python": "3.12.4",
+        "packages": {"numpy": "2.1.3", "pandas": "2.2.3", "scikit-learn": "1.5.2", "xgboost": "2.1.3"},
+        "predictions_rows": len(df),
         "models": sorted(experiment.MAIN),
     }
     (folder / "manifest.json").write_text(json.dumps(manifest))
@@ -543,3 +687,238 @@ def test_explorer_button_opens_the_note_pricer(tmp_path, monkeypatch):
     assert not at.exception
     assert any(t.value == "Note Pricer" for t in at.title)
     assert at.session_state["selection"] == selection
+
+
+def _evidence(tmp_path, monkeypatch, skip=()):
+    """AppTest on the Model Evidence page; results files named in `skip` are not written."""
+    folder = _write_artifacts(tmp_path / "app_artifacts", skip=skip)
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    at.run()
+    at.switch_page("model_evidence.py").run()
+    return at
+
+
+def _evidence_table(at, *first_columns):
+    """The page's dataframe whose columns start with `first_columns`, as a dict of lists."""
+    n = len(first_columns)
+    tables = [d.value for d in at.dataframe if list(d.value.columns)[:n] == list(first_columns)]
+    assert len(tables) == 1, first_columns
+    return tables[0].to_dict("list")
+
+
+def _brier_columns(rows):
+    """The formatted Brier columns of the page's robustness tables for `rows` of ROBUSTNESS."""
+    out = {}
+    for column, label in BRIER_COLUMNS.items():
+        out[label] = [f"{r[column]:.4f}" for r in rows]
+    return out
+
+
+def _cut_rows(cut):
+    return [r for r in _robustness_rows() if r["cut"] == cut]
+
+
+def _all_texts(at):
+    kinds = (at.title, at.header, at.subheader, at.markdown, at.caption, at.info, at.success, at.warning, at.error)
+    return [e.value for kind in kinds for e in kind]
+
+
+def _p_text(p):
+    return "< 0.001" if p < 0.001 else f"{p:.3f}"
+
+
+def test_evidence_shows_scores_for_every_model(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    shared = _shared(monkeypatch)
+    assert not at.exception
+    assert any(t.value == "Model Evidence" for t in at.title)
+    assert _evidence_table(at, "Model", "Brier") == {
+        "Model": [shared.MODEL_LABELS[m] for m in experiment.MAIN],
+        "Brier": [f"{SCORES[m][0]:.4f}" for m in experiment.MAIN],
+        "Log loss": [f"{SCORES[m][1]:.3f}" for m in experiment.MAIN],
+        "ECE": [f"{SCORES[m][2]:.3f}" for m in experiment.MAIN],
+    }
+    test = SPLIT["test"]
+    caption = f"Test period 2025-12-11 to 2026-01-03: {test['events']} days, {test['rows']:,} contract snapshots."
+    assert any(c.value == caption for c in at.caption), caption
+
+
+def test_evidence_shows_bootstrap_confidence_intervals(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    shared = _shared(monkeypatch)
+    assert not at.exception
+    table = _evidence_table(at, "Question")
+    assert list(table) == ["Question", "Baseline", "Challenger", "Brier difference", "95% CI", "p-value", "City-days"]
+    assert table["Question"] == [row[2] for row in BOOTSTRAP]
+    assert table["Baseline"] == [shared.MODEL_LABELS[row[0]] for row in BOOTSTRAP]
+    assert table["Challenger"] == [shared.MODEL_LABELS[row[1]] for row in BOOTSTRAP]
+    assert table["Brier difference"] == [f"{row[3]:.4f}" for row in BOOTSTRAP]
+    assert table["95% CI"] == [f"{row[4]:.4f} to {row[5]:.4f}" for row in BOOTSTRAP]
+    assert table["p-value"] == [_p_text(row[6]) for row in BOOTSTRAP]
+    assert table["City-days"] == [row[7] for row in BOOTSTRAP]
+    # Spelled out for the rows with p = 0.0 and p = 0.197.
+    assert table["Brier difference"][0] == "0.0182"
+    assert table["95% CI"][0] == "0.0124 to 0.0239"
+    assert table["p-value"][0] == "< 0.001"
+    assert table["95% CI"][2] == "-0.0009 to 0.0056"
+    assert table["p-value"][2] == "0.197"
+    assert table["Baseline"][2] == "Market mid, renormalised"
+    assert table["Challenger"][2] == "Combined, logistic"
+    terms = _evidence_table(at, "Term")
+    assert terms == {
+        "Term": ["Intercept", "Weather probability (logit)", "Market probability (logit)"],
+        "Coefficient": ["-0.12", "0.31", "0.88"],
+        "SE": ["0.15", "0.09", "0.07"],
+        "p-value": ["0.415", "< 0.001", "< 0.001"],
+    }
+
+
+def test_evidence_explains_how_to_read_the_numbers(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    text = "\n".join(m.value for m in at.markdown)
+    for words in ["out-of-sample", "Lower is better", "positive difference means the challenger"]:
+        assert words in text, words
+
+
+def test_evidence_shows_where_the_results_come_from(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    expanders = [e for e in at.expander if e.label == "Where these results come from"]
+    assert len(expanders) == 1
+    text = "\n".join(m.value for m in expanders[0].markdown)
+    for words in [
+        "2025-10-24",  # data range
+        "2026-01-03",
+        "2025-12-10",  # last train day
+        "2025-12-11",  # first test day
+        "1,240 of 1,312",
+        GIT_COMMIT[:12],
+        SRC_TREE[:12],
+    ]:
+        assert words in text, words
+
+
+def test_evidence_limits_conclusions_to_this_weather_baseline(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    assert any(
+        "this weather baseline" in e.value
+        and "not evidence that prediction markets are better than meteorology in general" in e.value
+        for e in at.info
+    )
+    for text in _all_texts(at):
+        assert "better than meteorology" not in text or "not evidence" in text, text
+
+
+def test_evidence_missing_results_file_shows_a_readable_error(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch, skip=("bootstrap.csv",))
+    assert not at.exception
+    assert any("bootstrap.csv" in e.value and "evaluate --save-artifacts" in e.value for e in at.error)
+    text = "\n".join(_texts(at))
+    for word in ATTRIBUTION_WORDS:
+        assert word in text, word
+
+
+def test_evidence_has_no_unescaped_dollar_pairs(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    _assert_no_unescaped_dollar_pairs(at)
+
+
+def test_evidence_shows_calibration_for_three_models(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    shared = _shared(monkeypatch)
+    assert not at.exception
+    assert "Calibration" in [s.value for s in at.subheader]
+    charts = at.get("vega_lite_chart")
+    assert len(charts) >= 1
+    # The chart's series: the three models plus the diagonal.
+    chart = charts[0].proto
+    data = chart.datasets[0].data.data if chart.datasets else chart.data.data
+    points = pa.ipc.open_stream(data).read_pandas()
+    series = {shared.MODEL_LABELS[m] for m in RELIABILITY_MODELS} | {"Perfect calibration"}
+    assert any(set(points[c]) == series for c in points.columns)
+    rows = _reliability_rows()
+    assert _evidence_table(at, "Model", "Bin") == {
+        "Model": [shared.MODEL_LABELS[r["model"]] for r in rows],
+        "Bin": [f"{r['bin_lo']:.1f}–{r['bin_lo'] + 0.1:.1f}" for r in rows],
+        "Contracts": [r["n"] for r in rows],
+        "Mean predicted": [f"{r['mean_pred']:.3f}" for r in rows],
+        "Observed": [f"{r['obs_freq']:.3f}" for r in rows],
+    }
+
+
+def test_evidence_shows_results_by_snapshot(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    assert "By snapshot" in [s.value for s in at.subheader]
+    lead = {r["snapshot"]: r for r in _cut_rows("lead")}
+    rows = [lead[s] for s in inference.SNAPSHOT_LABELS]
+    table = _evidence_table(at, "Snapshot")
+    expected = {
+        "Snapshot": ["D-1 14:00", "D-1 22:00", "D-0 08:00", "D-0 12:00"],
+        "City-days": [r["events"] for r in rows],
+        **_brier_columns(rows),
+    }
+    assert list(table) == list(expected)
+    assert table == expected
+    assert table["Snapshot"] == inference.SNAPSHOT_LABELS
+    # Spelled out for the first row (D-1 14:00).
+    assert table["Weather-only, XGBoost"][0] == "0.0951"
+    assert table["Gain from adding the market (XGBoost)"][0] == "0.0134"
+
+
+def test_evidence_shows_robustness_by_liquidity_and_settlement_source(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    expanders = [e for e in at.expander if e.label == "Robustness by liquidity and settlement source"]
+    assert len(expanders) == 1
+    tables = [d.value.to_dict("list") for d in expanders[0].dataframe]
+    assert len(tables) == 2
+    by_first = {list(t)[0]: t for t in tables}
+    assert set(by_first) == {"Liquidity", "Settlement source"}
+    for first, cut, key in [
+        ("Liquidity", "liquidity", "liquidity"),
+        ("Settlement source", "settle_source", "settle_source"),
+    ]:
+        rows = _cut_rows(cut)
+        table = by_first[first]
+        assert table[first] == [r[key] for r in rows], first
+        for label, values in _brier_columns(rows).items():
+            assert table[label] == values, (first, label)
+    assert any("few test days" in c.value for c in expanders[0].caption)
+
+
+def test_evidence_lists_the_limitations(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    assert "Limitations" in [s.value for s in at.subheader]
+    text = "\n".join(m.value for m in at.markdown)
+    for words in [
+        "7–23 h",
+        "D-0 08:00",
+        "D-0 12:00",
+        "34 h",
+        "ensemble",
+        "one chronological",
+        "stale",
+        "incomplete bracket",
+        "before 2025",
+        "hypothetical",
+        "illustrative",
+        "New York",
+    ]:
+        assert words in text, words
+
+
+def test_evidence_does_not_show_rmse(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    texts = _all_texts(at) + [e.label for e in at.expander]
+    for d in at.dataframe:
+        texts += [str(c) for c in d.value.columns]
+        texts += [str(x) for column in d.value.columns for x in d.value[column]]
+    texts += [c.proto.spec for c in at.get("vega_lite_chart")]
+    for text in texts:
+        assert "RMSE" not in text, text
