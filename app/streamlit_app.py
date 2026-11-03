@@ -14,6 +14,9 @@ shared.init()
 st.sidebar.warning(shared.NOTICE)
 
 page = st.navigation([st.Page("contract_explorer.py", title="Contract Explorer", default=True)])
-page.run()
-
+# Reserve the page area and draw the footer first: a page that stops on an error
+# (shared.guarded calls st.stop) must still show the data attribution.
+body = st.container()
 shared.attribution()
+with body:
+    page.run()

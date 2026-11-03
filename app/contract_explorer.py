@@ -1,9 +1,18 @@
-"""Contract Explorer: pick a city, day, snapshot and contract."""
+"""Contract Explorer: pick a city, day, snapshot and contract; compare the models."""
 
+import pandas as pd
 import streamlit as st
 
 import shared
 from weather_pricing import inference
+from weather_pricing.config import STALE_HOURS
+
+LIMITATION = (
+    "Known limitation: the weather models only use forecast runs started at least a day before "
+    "the hour they forecast (and published about 6 h after they start), so at the snapshot the "
+    "forecast is often 7–23 h old, and it is the same at D-0 08:00 and D-0 12:00. This likely "
+    "overstates the market's advantage."
+)
 
 shared.page_header(
     "Contract Explorer",
@@ -28,3 +37,48 @@ with shared.guarded():
         ),
         hide_index=True,
     )
+
+    ticker = contracts.loc[contracts["label"] == label, "ticker"].iloc[0]
+    result = inference.predict(city, day, snapshot, ticker)
+    # The Note Pricer picks up this choice.
+    st.session_state["selection"] = {"city": city, "date": day.isoformat(), "snapshot": snapshot, "ticker": ticker}
+
+    quote = result["contract"]
+    # Prices are dollars per $1 contract. Without a two-sided quote the dataset's "mid" is
+    # the last trade price (dataset.market_state), so it is named that way here.
+    # "\$": Streamlit Markdown reads a $...$ pair as inline math, so every $ is escaped.
+    if quote["mid"] is None:
+        st.markdown("Market quote: none at this snapshot.")
+    elif quote["spread"] is None:
+        st.markdown(f"Market quote: last trade price \\${quote['mid']:.2f} (no two-sided quote at this snapshot).")
+    else:
+        st.markdown(
+            f"Market quote: mid price \\${quote['mid']:.2f} (bid \\${quote['bid']:.2f}, "
+            f"ask \\${quote['ask']:.2f}, spread \\${quote['spread']:.2f})."
+        )
+    if quote["stale"]:
+        st.warning(
+            f"This quote is stale: no trade in the {STALE_HOURS:.0f} hours before the snapshot, "
+            "or no two-sided quote at the snapshot, so the market price may be out of date."
+        )
+
+    probs = result["probabilities"]
+    for family, models in result["families"].items():
+        st.subheader(shared.FAMILY_LABELS[family])
+        for column, model in zip(st.columns(len(models)), models):
+            column.metric(shared.MODEL_LABELS[model], f"{probs[model]:.1%}")
+    # Model names as a column with x= (not the index): with an index, Streamlit 1.66 calls
+    # reset_index(inplace=True), which pandas 3.1 deprecates.
+    st.bar_chart(
+        pd.DataFrame({"Model": [shared.MODEL_LABELS[m] for m in probs], "Probability": list(probs.values())}),
+        x="Model",
+        y="Probability",
+        horizontal=True,
+        sort=False,  # keep the family order of the metrics above
+    )
+    st.caption(LIMITATION)
+
+    outcome = result["outcome"]
+    settled = "unknown" if outcome["settled_value"] is None else f"{outcome['settled_value']:.0f}°F"
+    paid = "Yes" if outcome["y"] else "No"
+    (st.success if outcome["y"] else st.info)(f"Outcome: the daily high was {settled}, so this contract paid {paid}.")

@@ -83,7 +83,11 @@ Observed temperatures: NOAA National Centers for Environmental Information,
 Global Historical Climatology Network – Daily (GHCN-Daily), station USW00094728;
 Menne, M.J., I. Durre, R.S. Vose, B.E. Gleason and T.G. Houston (2012): An overview of
 the Global Historical Climatology Network-Daily database. *Journal of Atmospheric and
-Oceanic Technology*, 29, 897–910. NOAA provides the data with no warranty of any kind.
+Oceanic Technology*, 29, 897–910. Data citation: Menne, M.J., I. Durre, B. Korzeniewski,
+S. McNeill, K. Thomas, X. Yin, S. Anthony, R. Ray, R.S. Vose, B.E. Gleason and
+T.G. Houston (2012): Global Historical Climatology Network - Daily (GHCN-Daily),
+Version 3. NOAA National Climatic Data Center. doi:10.7289/V5D21VHZ.
+NOAA provides the data with no warranty of any kind.
 """
 
 
