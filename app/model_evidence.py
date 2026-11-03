@@ -26,8 +26,8 @@ LIMITATIONS = [
     "Only one chronological train/test split: no rolling-origin evaluation yet.",
     "Stale quotes: in illiquid hours the last hourly quote carries over; such rows are flagged stale and "
     "analysed separately.",
-    "Renormalised quotes: where an event's incomplete bracket set was quoted at a snapshot, the raw mid "
-    "is kept instead of the renormalised one.",
+    "Renormalised quotes: at a snapshot where not every bracket of an event was quoted, the raw mid is "
+    "kept instead of the renormalised one.",
     "Settled temperatures before 2025: Kalshi mostly omits them, so NOAA values fill the gap, only for "
     "the rule-based error model; outcomes always come from Kalshi.",
     "The note is hypothetical, not a traded security, and the risk loading λ is illustrative.",
@@ -42,6 +42,10 @@ BRIER_COLUMNS = {
     "A_minus_C_xgb": "Gain from adding the market (XGBoost)",
 }
 CALIBRATION_MODELS = ["A_xgb", "B_market_norm", "C_xgb"]
+# Liquidity buckets as experiment.run labels them, tightest spread first.
+LIQUIDITY_ORDER = ["spread<=2c", "2-5c", ">5c", "stale/no quote"]
+# The probabilities experiment.run passes to the encompassing regression.
+ENCOMPASSING_MODELS = {"weather": "A_logit", "market": "B_market_norm"}
 
 ENCOMPASSING_TERMS = {
     "const": "Intercept",
@@ -114,12 +118,22 @@ with shared.guarded():
     )
 
     st.subheader("Encompassing regression")
-    st.markdown(
-        "A logistic regression of the outcome on both probabilities at once. A clearly non-zero market "
-        "coefficient means the market has information the weather model lacks; a weather coefficient "
-        "near zero means the weather model adds nothing once the market is known."
-    )
     enc = evidence["encompassing"].reindex(list(ENCOMPASSING_TERMS))
+    weather_p = float(enc.loc["logit_weather", "p_value"])
+    p_short = "< 0.01" if weather_p < 0.01 else f"= {weather_p:.2f}"
+    if weather_p < 0.05:  # the sentence must follow the data, whichever way it comes out
+        weather_reading = f"is clearly different from zero (p {p_short})"
+    else:
+        weather_reading = (
+            f"is not clearly different from zero (p {p_short}), so the weather model adds no clear "
+            "information once the market is known"
+        )
+    st.markdown(
+        "A logistic regression of the outcome on both probabilities at once: the weather probability of "
+        f"{shared.MODEL_LABELS[ENCOMPASSING_MODELS['weather']]} and the market probability of "
+        f"{shared.MODEL_LABELS[ENCOMPASSING_MODELS['market']]}. A clearly non-zero market coefficient means "
+        f"the market has information the weather model lacks. The weather coefficient {weather_reading}."
+    )
     st.dataframe(
         pd.DataFrame(
             {
@@ -194,12 +208,20 @@ with shared.guarded():
 
     with st.expander("Robustness by liquidity and settlement source"):
         liquidity = robustness[robustness["cut"] == "liquidity"]
+        rank = {label: i for i, label in enumerate(LIQUIDITY_ORDER)}
+        liquidity = liquidity.sort_values("liquidity", key=lambda s: s.map(rank).fillna(len(rank)), kind="stable")
         st.dataframe(brier_table(liquidity, "liquidity", "Liquidity"), hide_index=True)
         sources = robustness[robustness["cut"] == "settle_source"]
         st.dataframe(brier_table(sources, "settle_source", "Settlement source"), hide_index=True)
-        st.caption(
-            "The Weather Company is the settlement source for few test days, so its numbers are less certain."
-        )
+        twc = sources[sources["settle_source"] == "The Weather Company"]
+        if not twc.empty:
+            st.caption(
+                f"The Weather Company settles {int(twc['events'].iloc[0])} of {test['events']} test city-days, "
+                "so its numbers are less certain."
+            )
 
     st.subheader("Limitations")
     st.markdown("\n".join(f"- {line}" for line in LIMITATIONS))
+
+    st.subheader("Data sources")
+    st.markdown(shared.data_sources(manifest), unsafe_allow_html=True)

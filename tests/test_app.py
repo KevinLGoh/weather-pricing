@@ -14,7 +14,7 @@ pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 from streamlit.testing.v1.element_tree import Block  # noqa: E402
 
-from weather_pricing import artifacts, experiment, inference  # noqa: E402
+from weather_pricing import artifacts, config, experiment, inference  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 PAGES = ["contract_explorer.py", "note_pricer.py", "model_evidence.py"]
@@ -43,6 +43,26 @@ ATTRIBUTION_WORDS = [
     "no warranty",
     "Kalshi",
 ]
+# Parts of the full data sources text (shared.data_sources), with or without a manifest.
+DATA_SOURCES_WORDS = [
+    "Kalshi",
+    '<a href="https://open-meteo.com/">Weather data by Open-Meteo.com</a>',
+    '<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>',
+    "processed",
+    "GHCN-Daily",
+    "Version 3",
+    "doi:10.7289/V5D21VHZ",
+    "Menne",
+    "(2012)",
+    "897–910",  # the Menne et al. (2012) paper
+    "no warranty",
+]
+NOAA_ACCESSED = "2026-10-30"  # noaa_accessed of the synthetic manifest
+
+
+def _subset_sentence(city):
+    c = config.CITIES[city]
+    return f"Subset used: station {c.ghcnd}, {c.name}, elements TMAX and TMIN."
 
 
 def _event(day):
@@ -74,9 +94,10 @@ BOOTSTRAP = [
     ("A_xgb", "B_market_norm", "Market alone vs best weather-only", 0.01229, 0.00618, 0.01853, 0.0004, 61),
     ("B_market_mid", "B_market_norm", "Renormalising quotes within an event", 0.00485, 0.00213, 0.00772, 0.0013, 61),
 ]
+# The weather p-value is above 0.05 on purpose (0.4152, not 0.415: a float 0.415 shows as "0.41").
 ENCOMPASSING = {  # term -> (coef, se, z, p_value, ci_lo, ci_hi)
     "const": (-0.1184, 0.1452, -0.8154, 0.4148, -0.4030, 0.1662),
-    "logit_weather": (0.3127, 0.0911, 3.4325, 0.0006, 0.1341, 0.4913),
+    "logit_weather": (0.0742, 0.0911, 0.8145, 0.4152, -0.1044, 0.2528),
     "logit_market": (0.8846, 0.0743, 11.9058, 0.0, 0.7390, 1.0302),
 }
 SPLIT = {
@@ -93,7 +114,8 @@ DATA_QUALITY = {
     "incomplete_bracket_rows": 12,
 }
 # Robustness cuts: (cut, key column, key, events, Brier of A_xgb, B_market_norm, C_logit, C_xgb).
-# The lead snapshots are written out of order so the page's ordering is tested.
+# The lead snapshots and liquidity buckets (labels as experiment.run writes them) are written out
+# of order so the page's ordering is tested.
 ROBUSTNESS = [
     ("lead", "snapshot", "D-0 12:00", 58, (0.0712, 0.0598, 0.0591, 0.0589)),
     ("lead", "snapshot", "D-1 14:00", 61, (0.0951, 0.0843, 0.0822, 0.0817)),
@@ -101,10 +123,13 @@ ROBUSTNESS = [
     ("lead", "snapshot", "D-1 22:00", 59, (0.0899, 0.0781, 0.0760, 0.0755)),
     ("liquidity", "liquidity", "2-5c", 57, (0.0866, 0.0741, 0.0729, 0.0722)),
     ("liquidity", "liquidity", "stale/no quote", 33, (0.1032, 0.0954, 0.0921, 0.0915)),
+    ("liquidity", "liquidity", "spread<=2c", 52, (0.0811, 0.0698, 0.0684, 0.0679)),
+    ("liquidity", "liquidity", ">5c", 41, (0.0943, 0.0857, 0.0831, 0.0826)),
     ("city", "city", "NY", 61, (0.0891, 0.0768, 0.0744, 0.0739)),
-    ("settle_source", "settle_source", "kalshi", 55, (0.0884, 0.0761, 0.0738, 0.0733)),
-    ("settle_source", "settle_source", "weather_company", 6, (0.0957, 0.0836, 0.0802, 0.0794)),
+    ("settle_source", "settle_source", "NWS", 55, (0.0884, 0.0761, 0.0738, 0.0733)),
+    ("settle_source", "settle_source", "The Weather Company", 6, (0.0957, 0.0836, 0.0802, 0.0794)),
 ]
+LIQUIDITY_ORDER = ["spread<=2c", "2-5c", ">5c", "stale/no quote"]  # tightest spread first
 BRIER_COLUMNS = {  # robustness column -> page column
     "A_xgb": "Weather-only, XGBoost",
     "B_market_norm": "Market mid, renormalised",
@@ -187,7 +212,8 @@ def _write_results(folder, skip=()):
             (folder / name).write_text(json.dumps(content))
 
 
-def _write_artifacts(folder, skip=()):
+def _write_artifacts(folder, skip=(), manifest_changes=None):
+    """Synthetic artifacts; `manifest_changes` sets manifest keys (a value of None removes the key)."""
     rows = []
     for day in (DAY1, DAY2):
         event = _event(day)
@@ -239,7 +265,13 @@ def _write_artifacts(folder, skip=()):
         "packages": {"numpy": "2.1.3", "pandas": "2.2.3", "scikit-learn": "1.5.2", "xgboost": "2.1.3"},
         "predictions_rows": len(df),
         "models": sorted(experiment.MAIN),
+        "noaa_accessed": NOAA_ACCESSED,
     }
+    for key, value in (manifest_changes or {}).items():
+        if value is None:
+            manifest.pop(key, None)
+        else:
+            manifest[key] = value
     (folder / "manifest.json").write_text(json.dumps(manifest))
     return folder
 
@@ -767,10 +799,12 @@ def test_evidence_shows_bootstrap_confidence_intervals(tmp_path, monkeypatch):
     terms = _evidence_table(at, "Term")
     assert terms == {
         "Term": ["Intercept", "Weather probability (logit)", "Market probability (logit)"],
-        "Coefficient": ["-0.12", "0.31", "0.88"],
-        "SE": ["0.15", "0.09", "0.07"],
-        "p-value": ["0.415", "< 0.001", "< 0.001"],
+        "Coefficient": [f"{row[0]:.2f}" for row in ENCOMPASSING.values()],
+        "SE": [f"{row[1]:.2f}" for row in ENCOMPASSING.values()],
+        "p-value": [_p_text(row[3]) for row in ENCOMPASSING.values()],
     }
+    # Spelled out for the weather term.
+    assert (terms["Coefficient"][1], terms["SE"][1], terms["p-value"][1]) == ("0.07", "0.09", "0.415")
 
 
 def test_evidence_explains_how_to_read_the_numbers(tmp_path, monkeypatch):
@@ -878,16 +912,76 @@ def test_evidence_shows_robustness_by_liquidity_and_settlement_source(tmp_path, 
     assert len(tables) == 2
     by_first = {list(t)[0]: t for t in tables}
     assert set(by_first) == {"Liquidity", "Settlement source"}
-    for first, cut, key in [
-        ("Liquidity", "liquidity", "liquidity"),
-        ("Settlement source", "settle_source", "settle_source"),
+    liquidity = {r["liquidity"]: r for r in _cut_rows("liquidity")}
+    for first, key, rows in [
+        ("Liquidity", "liquidity", [liquidity[label] for label in LIQUIDITY_ORDER]),
+        ("Settlement source", "settle_source", _cut_rows("settle_source")),
     ]:
-        rows = _cut_rows(cut)
         table = by_first[first]
         assert table[first] == [r[key] for r in rows], first
+        assert table["City-days"] == [r["events"] for r in rows], first
         for label, values in _brier_columns(rows).items():
             assert table[label] == values, (first, label)
-    assert any("few test days" in c.value for c in expanders[0].caption)
+    assert not any("few test days" in text for text in _all_texts(at))
+
+
+def _after_subheader(at, title):
+    """The element right after the subheader `title` on the page."""
+    elements = [n for n in at.main if not isinstance(n, Block)]
+    i = next(i for i, n in enumerate(elements) if n.type == "subheader" and n.value == title)
+    return elements[i + 1]
+
+
+def test_evidence_encompassing_text_names_both_models_and_the_weather_p_value(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    shared = _shared(monkeypatch)
+    assert not at.exception
+    text = _after_subheader(at, "Encompassing regression").value
+    assert shared.MODEL_LABELS["A_logit"] in text
+    assert shared.MODEL_LABELS["B_market_norm"] in text
+    assert "not clearly different from zero (p = 0.42)" in text  # ENCOMPASSING: p = 0.4152
+    # With a weather p-value below 0.05 the sentence must not say "not clearly".
+    folder = _write_artifacts(tmp_path / "low_p")
+    encompassing = pd.read_csv(folder / "encompassing.csv", index_col=0)
+    encompassing.loc["logit_weather", "p_value"] = 0.01
+    encompassing.to_csv(folder / "encompassing.csv")
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    at.run()
+    at.switch_page("model_evidence.py").run()
+    assert not at.exception
+    text = _after_subheader(at, "Encompassing regression").value
+    assert "is clearly different from zero (p = 0.01)" in text
+    assert "not clearly" not in text
+
+
+def test_evidence_lists_liquidity_with_the_tightest_spread_first(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    assert _evidence_table(at, "Liquidity")["Liquidity"] == ["spread<=2c", "2-5c", ">5c", "stale/no quote"]
+
+
+def test_evidence_counts_the_weather_company_city_days(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    n = next(r["events"] for r in _cut_rows("settle_source") if r["settle_source"] == "The Weather Company")
+    total = SPLIT["test"]["events"]
+    assert n < total
+    expanders = [e for e in at.expander if e.label == "Robustness by liquidity and settlement source"]
+    assert len(expanders) == 1
+    caption = f"The Weather Company settles {n} of {total} test city-days"
+    assert any(caption in c.value for c in expanders[0].caption), caption
+    assert not any("few test days" in text for text in _all_texts(at))
+
+
+def test_evidence_limitation_on_incomplete_brackets_is_exact(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    text = _after_subheader(at, "Limitations").value
+    words = (
+        "at a snapshot where not every bracket of an event was quoted, the raw mid is kept instead of "
+        "the renormalised one"
+    )
+    assert words in text
 
 
 def test_evidence_lists_the_limitations(tmp_path, monkeypatch):
@@ -903,7 +997,7 @@ def test_evidence_lists_the_limitations(tmp_path, monkeypatch):
         "ensemble",
         "one chronological",
         "stale",
-        "incomplete bracket",
+        "not every bracket of an event was quoted",
         "before 2025",
         "hypothetical",
         "illustrative",
@@ -922,3 +1016,144 @@ def test_evidence_does_not_show_rmse(tmp_path, monkeypatch):
     texts += [c.proto.spec for c in at.get("vega_lite_chart")]
     for text in texts:
         assert "RMSE" not in text, text
+
+
+def _footer(at):
+    """The footer's markdown text (the only markdown with the Open-Meteo credit outside Model Evidence)."""
+    footers = [m.value for m in at.markdown if "Weather data by Open-Meteo.com" in m.value]
+    assert len(footers) == 1
+    return footers[0]
+
+
+def _explorer_footer(tmp_path, monkeypatch, manifest_changes):
+    folder = _write_artifacts(tmp_path / "app_artifacts", manifest_changes=manifest_changes)
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    at.run()  # the Contract Explorer is the default page
+    assert not at.exception
+    return _footer(at)
+
+
+def test_evidence_has_a_data_sources_section_with_the_full_attribution(tmp_path, monkeypatch):
+    at = _evidence(tmp_path, monkeypatch)
+    assert not at.exception
+    elements = [n for n in at.main if not isinstance(n, Block)]
+    i = next(i for i, n in enumerate(elements) if n.type == "subheader" and n.value == "Data sources")
+    assert elements[i + 1].type == "markdown"
+    text = elements[i + 1].value
+    for words in DATA_SOURCES_WORDS + [_subset_sentence("NY"), f"Accessed {NOAA_ACCESSED}."]:
+        assert words in text, words
+
+
+def test_ghcn_citation_names_the_station_from_config_and_the_access_date(tmp_path, monkeypatch):
+    footer = _explorer_footer(tmp_path, monkeypatch, {"noaa_accessed": "2026-11-04"})
+    assert config.CITIES["NY"].ghcnd in footer
+    assert _subset_sentence("NY") in footer
+    assert "Accessed 2026-11-04." in footer
+    assert "Access date not recorded." not in footer
+
+
+def test_ghcn_citation_without_access_date_says_so(tmp_path, monkeypatch):
+    for value in (None, "unknown"):  # None: the manifest has no noaa_accessed
+        footer = _explorer_footer(tmp_path / str(value), monkeypatch, {"noaa_accessed": value})
+        assert "Access date not recorded." in footer, value
+        assert "Accessed" not in footer, value
+        assert _subset_sentence("NY") in footer, value
+
+
+def test_footer_still_shows_sources_when_artifacts_are_missing(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch, folder=tmp_path / "missing")
+    at.run()
+    assert not at.exception
+    footer = _footer(at)
+    for words in ["Weather data by Open-Meteo.com", "GHCN-Daily", "no warranty"]:
+        assert words in footer, words
+    assert "Subset used" not in footer
+    assert "Accessed" not in footer
+    assert "Access date not recorded." not in footer
+
+
+def test_footer_ignores_any_error_while_reading_the_manifest(tmp_path, monkeypatch):
+    def boom():
+        raise RuntimeError("boom")
+
+    at = _app(tmp_path, monkeypatch)
+    monkeypatch.setattr(inference, "load_manifest", boom)
+    at.run()
+    assert not at.exception
+    footer = _footer(at)
+    assert "GHCN-Daily" in footer
+    assert "Subset used" not in footer
+
+
+class _RecordingLog:
+    """Stands in for shared.log and records every call as (method, args, kwargs)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def _record(self, method, args, kwargs):
+        self.calls.append((method, args, kwargs))
+
+    def info(self, *args, **kwargs):
+        self._record("info", args, kwargs)
+
+    def warning(self, *args, **kwargs):
+        self._record("warning", args, kwargs)
+
+    def exception(self, *args, **kwargs):
+        self._record("exception", args, kwargs)
+
+    def of(self, method):
+        return [call for call in self.calls if call[0] == method]
+
+
+def test_footer_logs_one_quiet_line_when_artifacts_are_missing(tmp_path, monkeypatch):
+    # Missing artifacts are an expected state: one info line, no stack trace. The page's own
+    # guarded() shows the InferenceError without logging it.
+    at = _app(tmp_path, monkeypatch, folder=tmp_path / "missing")
+    shared = _shared(monkeypatch)
+    log = _RecordingLog()
+    monkeypatch.setattr(shared, "log", log)
+    at.run()
+    assert not at.exception
+    assert len(log.of("info")) == 1, log.calls
+    assert not log.of("info")[0][2].get("exc_info"), log.calls
+    assert log.of("exception") == [], log.calls
+
+    # Any other error while reading the manifest is still logged with its stack trace.
+    def boom():
+        raise RuntimeError("boom")
+
+    at = _app(tmp_path, monkeypatch)
+    log = _RecordingLog()
+    monkeypatch.setattr(shared, "log", log)
+    monkeypatch.setattr(inference, "load_manifest", boom)
+    at.run()
+    assert not at.exception
+    assert len(log.of("exception")) >= 1, log.calls
+
+
+def test_data_sources_without_a_manifest_has_no_subset_or_date(monkeypatch):
+    shared = _shared(monkeypatch)
+    text = shared.data_sources(None)
+    for words in DATA_SOURCES_WORDS:
+        assert words in text, words
+    assert "Subset used" not in text
+    assert "Accessed" not in text
+    assert "Access date not recorded." not in text
+
+
+def test_data_sources_names_every_city_of_the_manifest(monkeypatch):
+    shared = _shared(monkeypatch)
+    text = shared.data_sources({"cities": ["NY", "CHI"], "noaa_accessed": "2026-11-04"})
+    for words in DATA_SOURCES_WORDS + [_subset_sentence("NY"), _subset_sentence("CHI"), "Accessed 2026-11-04."]:
+        assert words in text, words
+
+
+def test_data_sources_marks_a_city_without_a_configured_station(monkeypatch):
+    shared = _shared(monkeypatch)
+    assert "ZZ" not in config.CITIES
+    text = shared.data_sources({"cities": ["NY", "ZZ"], "noaa_accessed": "2026-11-04"})
+    assert _subset_sentence("NY") in text
+    assert "Subset used: station not configured for ZZ." in text
+    assert "Accessed 2026-11-04." in text

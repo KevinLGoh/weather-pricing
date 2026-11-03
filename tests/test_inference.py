@@ -519,3 +519,14 @@ def test_load_evidence_missing_scores_raises_artifacts_missing(tmp_path, monkeyp
         inference.load_evidence()
     assert "scores.csv" in str(info.value)
     assert "evaluate --save-artifacts" in str(info.value)
+
+
+def test_load_manifest_returns_a_copy_of_the_manifest(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    on_disk = json.loads((tmp_path / "app_artifacts" / "manifest.json").read_text())
+    manifest = inference.load_manifest()
+    assert manifest == on_disk
+    manifest["cities"].append("XX")
+    manifest["settings"]["rate"] = 0.99
+    manifest["extra"] = True
+    assert inference.load_manifest() == on_disk

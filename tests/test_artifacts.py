@@ -1,5 +1,6 @@
 import json
 import subprocess
+from datetime import datetime, timezone
 
 import pandas as pd
 import pytest
@@ -55,8 +56,24 @@ def _results_dir(tmp_path, names=("scores.csv", "split.json")):
     return results
 
 
+def _raw_dir(monkeypatch, path):
+    """Point save() at a test raw folder, so it never reads the real data/raw/noaa."""
+    monkeypatch.setattr(artifacts, "RAW_DIR", path, raising=False)
+
+
+def _noaa_cache_file(folder, name, fetched):
+    folder.mkdir(parents=True, exist_ok=True)
+    body = {"url": "https://example.test/noaa", "params": {}, "fetched": fetched, "body": {}}
+    (folder / name).write_text(json.dumps(body))
+
+
+def _epoch(*args):
+    return datetime(*args, tzinfo=timezone.utc).timestamp()
+
+
 def test_save_writes_models_predictions_results_and_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts, "_git", _fake_git())
+    _raw_dir(monkeypatch, tmp_path / "raw")
     out = tmp_path / "out"
     manifest = artifacts.save(out, MODELS, _predictions(), _results_dir(tmp_path), INFO)
     for name in ["models.pkl", "predictions.parquet", "scores.csv", "split.json", "manifest.json"]:
@@ -66,6 +83,7 @@ def test_save_writes_models_predictions_results_and_manifest(tmp_path, monkeypat
 
 def test_manifest_records_commit_date_range_and_row_counts(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts, "_git", _fake_git())
+    _raw_dir(monkeypatch, tmp_path / "raw")
     out = tmp_path / "out"
     manifest = artifacts.save(out, MODELS, _predictions(), _results_dir(tmp_path), INFO)
     assert (manifest["git_commit"], manifest["src_tree"], manifest["git_dirty"]) == ("abc123", "def456", False)
@@ -80,6 +98,7 @@ def test_manifest_records_commit_date_range_and_row_counts(tmp_path, monkeypatch
 
 def test_manifest_records_unknown_when_git_is_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts, "_git", lambda *args: "unknown")
+    _raw_dir(monkeypatch, tmp_path / "raw")
     manifest = artifacts.save(tmp_path / "out", MODELS, _predictions(), _results_dir(tmp_path), INFO)
     assert (manifest["git_commit"], manifest["src_tree"], manifest["git_dirty"]) == ("unknown", "unknown", "unknown")
 
@@ -98,6 +117,7 @@ def test_git_dirty_ignores_untracked_files(monkeypatch):
 
 def test_missing_results_file_is_skipped_not_fatal(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts, "_git", _fake_git())
+    _raw_dir(monkeypatch, tmp_path / "raw")
     out = tmp_path / "out"
     manifest = artifacts.save(out, MODELS, _predictions(), _results_dir(tmp_path, ["scores.csv"]), INFO)
     assert (out / "scores.csv").exists()
@@ -107,6 +127,7 @@ def test_missing_results_file_is_skipped_not_fatal(tmp_path, monkeypatch):
 
 def test_saved_models_load_back(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts, "_git", _fake_git())
+    _raw_dir(monkeypatch, tmp_path / "raw")
     out = tmp_path / "out"
     artifacts.save(out, MODELS, _predictions(), _results_dir(tmp_path), INFO)
     assert artifacts.load_models(out / "models.pkl") == MODELS
@@ -123,6 +144,7 @@ def test_git_returns_unknown_when_command_fails(monkeypatch):
 
 def test_rebuild_removes_results_files_that_no_longer_exist(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts, "_git", _fake_git())
+    _raw_dir(monkeypatch, tmp_path / "raw")
     out = tmp_path / "out"
     results = _results_dir(tmp_path)
     artifacts.save(out, MODELS, _predictions(), results, INFO)
@@ -134,6 +156,7 @@ def test_rebuild_removes_results_files_that_no_longer_exist(tmp_path, monkeypatc
 
 def test_failed_save_leaves_no_stale_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts, "_git", _fake_git())
+    _raw_dir(monkeypatch, tmp_path / "raw")
     out = tmp_path / "out"
     results = _results_dir(tmp_path)
     artifacts.save(out, MODELS, _predictions(), results, INFO)
@@ -145,6 +168,7 @@ def test_failed_save_leaves_no_stale_manifest(tmp_path, monkeypatch):
 
 def test_failed_manifest_write_leaves_no_partial_file(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts, "_git", _fake_git())
+    _raw_dir(monkeypatch, tmp_path / "raw")
 
     def boom(*args, **kwargs):
         raise OSError("disk full")
@@ -169,3 +193,31 @@ def test_git_info_unknown_when_root_is_not_the_repo_top(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts, "_git", _fake_git(toplevel=str(tmp_path)))
     info = artifacts.git_info()
     assert (info["git_commit"], info["src_tree"], info["git_dirty"]) == ("unknown", "unknown", "unknown")
+
+
+def test_manifest_records_the_newest_noaa_access_date(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifacts, "_git", _fake_git())
+    _raw_dir(monkeypatch, tmp_path / "raw")
+    noaa = tmp_path / "raw" / "noaa"
+    # The newest file sorts first by name, so "last file read" would give the wrong date.
+    _noaa_cache_file(noaa, "a.json", _epoch(2026, 11, 4, 1, 15))
+    _noaa_cache_file(noaa, "b.json", _epoch(2026, 11, 2, 23, 30))
+    (noaa / "broken.json").write_text("{")
+    out = tmp_path / "out"
+    manifest = artifacts.save(out, MODELS, _predictions(), _results_dir(tmp_path), INFO)
+    assert manifest["noaa_accessed"] == "2026-11-04"
+    assert json.loads((out / "manifest.json").read_text())["noaa_accessed"] == "2026-11-04"
+
+
+def test_manifest_noaa_access_date_unknown_without_cache_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifacts, "_git", _fake_git())
+    _raw_dir(monkeypatch, tmp_path / "raw")
+    results = _results_dir(tmp_path)
+    manifest = artifacts.save(tmp_path / "out", MODELS, _predictions(), results, INFO)
+    assert manifest["noaa_accessed"] == "unknown"
+    noaa = tmp_path / "raw" / "noaa"
+    _noaa_cache_file(noaa, "text.json", "yesterday")
+    _noaa_cache_file(noaa, "missing.json", None)
+    (noaa / "broken.json").write_text("{")
+    manifest = artifacts.save(tmp_path / "out", MODELS, _predictions(), results, INFO)
+    assert manifest["noaa_accessed"] == "unknown"

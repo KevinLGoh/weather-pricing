@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import ROOT
+from .config import RAW_DIR, ROOT
 
 ARTIFACTS_DIR = ROOT / "app_artifacts"
 
@@ -81,6 +81,23 @@ def _package_versions() -> dict[str, str]:
     return out
 
 
+def _noaa_accessed() -> str:
+    """UTC date of the newest cached NOAA response (http.get_json stores "fetched"), the
+    access date NOAA asks for in the GHCN-Daily citation; "unknown" if none can be read.
+    The newest one, because the current year is fetched again on every build."""
+    newest = None
+    for path in sorted((RAW_DIR / "noaa").glob("*.json")):
+        try:
+            fetched = json.loads(path.read_text())["fetched"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if isinstance(fetched, (int, float)) and not isinstance(fetched, bool):
+            newest = fetched if newest is None else max(newest, fetched)
+    if newest is None:
+        return "unknown"
+    return datetime.fromtimestamp(newest, tz=timezone.utc).date().isoformat()
+
+
 def save(out_dir: Path, models: dict, predictions: pd.DataFrame, results_dir: Path, info: dict) -> dict:
     """Write models, predictions, the existing results files and manifest.json."""
     out_dir = Path(out_dir)
@@ -107,6 +124,7 @@ def save(out_dir: Path, models: dict, predictions: pd.DataFrame, results_dir: Pa
         **git_info(),
         "python": platform.python_version(),
         "packages": _package_versions(),
+        "noaa_accessed": _noaa_accessed(),
         "predictions_rows": len(predictions),
         "models": sorted(models),
         "files": sorted(files),

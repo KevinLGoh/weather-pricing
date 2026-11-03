@@ -329,6 +329,11 @@ def _load_evidence(folder: str) -> dict:
     return out
 
 
+def load_manifest() -> dict:
+    """The artifacts' manifest (a copy), without loading the results files."""
+    return copy.deepcopy(_artifacts()["manifest"])
+
+
 def load_evidence() -> dict:
     """Scores, bootstrap CIs, encompassing test, calibration, robustness cuts,
     valuation summary, split, manifest and data quality (None if not built)."""
