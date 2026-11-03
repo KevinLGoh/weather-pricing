@@ -1,0 +1,28 @@
+{
+  "rows": 33473,
+  "contracts": 8403,
+  "events": 1401,
+  "date_range": [
+    "2023-01-01",
+    "2026-11-02"
+  ],
+  "by_city": {
+    "NY": 1401
+  },
+  "settlement_sources": {
+    "NWS": 7917,
+    "The Weather Company": 486
+  },
+  "rule_text_mismatches": 0,
+  "bracket_logic_matches_result": 1.0,
+  "noaa_outcome_matches_result": 0.9997614788312462,
+  "settled_minus_noaa_tmax": {
+    "share_equal": 0.9903536977491961,
+    "share_within_1F": 0.9983922829581994,
+    "n": 622
+  },
+  "missing_forecast_rows": 522,
+  "stale_rows": 9783,
+  "incomplete_bracket_rows": 40,
+  "event_mid_sum_median": 1.0699999999999998
+}
