@@ -18,7 +18,10 @@ from sklearn.linear_model import LinearRegression, Ridge
 from .models import _fit_xgb, _logit_model, clip, market_features, weather_features, GaussianRule
 
 FORECASTS = ["fc_tmax", "gfs_max", "nbm_max", "lamp_max"]
-PREDICTORS = [*FORECASTS, "obs_max_sofar", "obs_latest"]
+# The X family adds these. The extra models start in March 2024, so earlier rows fill them
+# from the consensus of the forecasts that do exist.
+EXTENDED_FORECASTS = [*FORECASTS, "nam_max", "om_ecmwf_max", "om_icon_max", "om_gem_max"]
+OBS = ["obs_max_sofar", "obs_latest"]
 MIN_SIGMA = 0.75
 MIN_GROUP_DAYS = 30
 
@@ -36,14 +39,17 @@ def bracket_probability(low, high, mu, sigma, floor) -> np.ndarray:
     return np.maximum(norm.cdf(b) - norm.cdf(a), 0.0) / np.maximum(1 - norm.cdf(f), 1e-9)
 
 
-def _design(frame: pd.DataFrame, columns: list[str]) -> np.ndarray:
+def _design(frame: pd.DataFrame, columns: list[str], forecasts: list[str]) -> np.ndarray:
     """Predictor matrix, with a missing value replaced by the row's forecast consensus."""
-    consensus = frame[FORECASTS].mean(axis=1)
+    consensus = frame[forecasts].mean(axis=1)
     return frame[columns].apply(lambda c: c.fillna(consensus)).to_numpy(dtype=float)
 
 
 class NowcastRule:
     """Predictive distribution of the daily high, fitted per city and snapshot."""
+
+    def __init__(self, forecasts: list[str] = FORECASTS):
+        self.forecasts = forecasts
 
     def fit(self, df: pd.DataFrame) -> NowcastRule:
         ev = df.drop_duplicates(["event_ticker", "snapshot"])
@@ -56,8 +62,8 @@ class NowcastRule:
         return self
 
     def _fit_group(self, g: pd.DataFrame) -> dict:
-        columns = [c for c in PREDICTORS if g[c].notna().any()]
-        X, y = _design(g, columns), g["settled_value"].to_numpy(dtype=float)
+        columns = [c for c in [*self.forecasts, *OBS] if g[c].notna().any()]
+        X, y = _design(g, columns, self.forecasts), g["settled_value"].to_numpy(dtype=float)
         centre = Ridge(alpha=1.0).fit(X, y)
         abs_err = np.abs(y - centre.predict(X))
         spread = g["nbm_spread"].fillna(self.spread_median_).to_numpy(dtype=float).reshape(-1, 1)
@@ -69,7 +75,7 @@ class NowcastRule:
         for key, g in df.groupby(["city", "snapshot"]):
             params = self.params_.get(key, self.global_)
             idx = pos.loc[g.index].to_numpy()
-            mu[idx] = params["centre"].predict(_design(g, params["columns"]))
+            mu[idx] = params["centre"].predict(_design(g, params["columns"], self.forecasts))
             spread = g["nbm_spread"].fillna(self.spread_median_).to_numpy(dtype=float).reshape(-1, 1)
             # For a normal error, the standard deviation is mean |error| * sqrt(pi / 2).
             sigma[idx] = np.maximum(params["scale"].predict(spread) * np.sqrt(np.pi / 2), MIN_SIGMA)
@@ -91,7 +97,7 @@ def weather_plus_features(df: pd.DataFrame, rule: NowcastRule, base_rule: Gaussi
             "w_z_low": np.clip((low - 0.5 - mu) / sigma, -6, 6),
             "w_z_high": np.clip((high + 0.5 - mu) / sigma, -6, 6),
             "w_sigma": sigma,
-            "forecast_disagreement": df[FORECASTS].std(axis=1).fillna(0).to_numpy(),
+            "forecast_disagreement": df[rule.forecasts].std(axis=1).fillna(0).to_numpy(),
             "nbm_spread": df["nbm_spread"].fillna(rule.spread_median_).to_numpy(),
             # How far the day's high so far sits from each end of the bracket.
             "floor_above_low": np.nan_to_num(np.clip(floor - low, -20, 20), nan=-20.0),
@@ -109,25 +115,30 @@ def weather_plus_features(df: pd.DataFrame, rule: NowcastRule, base_rule: Gaussi
     ).astype(float)
 
 
-def _feature_sets(df: pd.DataFrame, rule: NowcastRule, base_rule: GaussianRule) -> dict[str, pd.DataFrame]:
+def _feature_sets(df: pd.DataFrame, rule: NowcastRule, base_rule: GaussianRule, weather: str, combined: str) -> dict[str, pd.DataFrame]:
     w = weather_plus_features(df, rule, base_rule)
-    return {"W": w, "CW": pd.concat([w, market_features(df)], axis=1)}
+    return {weather: w, combined: pd.concat([w, market_features(df)], axis=1)}
 
 
-def fit_models(train: pd.DataFrame, val_mask: np.ndarray) -> dict:
+def fit_models(
+    train: pd.DataFrame, val_mask: np.ndarray, forecasts: list[str] = FORECASTS, weather: str = "W", combined: str = "CW"
+) -> dict:
     y = train["y"].to_numpy()
-    rule, base_rule = NowcastRule().fit(train), GaussianRule().fit(train)
-    X = _feature_sets(train, rule, base_rule)
-    models: dict = {"W_rule": rule, "_base_rule": base_rule}
-    for family in ["W", "CW"]:
+    rule, base_rule = NowcastRule(forecasts).fit(train), GaussianRule().fit(train)
+    X = _feature_sets(train, rule, base_rule, weather, combined)
+    models: dict = {f"{weather}_rule": rule, "_base_rule": base_rule, "_names": (weather, combined)}
+    for family in [weather, combined]:
         models[f"{family}_logit"] = _logit_model().fit(X[family], y)
         models[f"{family}_xgb"] = _fit_xgb(X[family], y, val_mask)
     return models
 
 
 def predict_models(models: dict, test: pd.DataFrame) -> dict[str, np.ndarray]:
-    X = _feature_sets(test, models["W_rule"], models["_base_rule"])
-    preds = {"W_rule": models["W_rule"].predict(test)}
-    for name in ["W_logit", "W_xgb", "CW_logit", "CW_xgb"]:
-        preds[name] = clip(models[name].predict_proba(X[name.split("_")[0]])[:, 1])
+    weather, combined = models["_names"]
+    rule = models[f"{weather}_rule"]
+    X = _feature_sets(test, rule, models["_base_rule"], weather, combined)
+    preds = {f"{weather}_rule": rule.predict(test)}
+    for family in [weather, combined]:
+        for kind in ["logit", "xgb"]:
+            preds[f"{family}_{kind}"] = clip(models[f"{family}_{kind}"].predict_proba(X[family])[:, 1])
     return preds

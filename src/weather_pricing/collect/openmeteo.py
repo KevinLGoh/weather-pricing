@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import pandas as pd
+import requests
 
 from ..config import MAX_PREVIOUS_DAY
 from ..http import get_json
@@ -50,4 +51,38 @@ def hourly_previous_runs(
     wide = pd.concat(frames, ignore_index=True)
     long = wide.melt(id_vars="valid_time", var_name="var", value_name="temp_f")
     long["lead_day"] = long["var"].str.extract(r"previous_day(\d+)$").astype(int)
+    # A chunk from before a model's archive starts is all nulls, which pandas reads as objects.
+    long["temp_f"] = pd.to_numeric(long["temp_f"], errors="coerce")
     return long.drop(columns="var").dropna(subset=["temp_f"]).reset_index(drop=True)
+
+
+SINGLE_RUN_URL = "https://single-runs-api.open-meteo.com/v1/forecast"
+# Open-Meteo allows 5,000 calls an hour on the free tier.
+SINGLE_RUN_INTERVAL = 0.8
+
+
+def single_run(lat: float, lon: float, model: str, run: pd.Timestamp, hours: int = 60) -> pd.DataFrame:
+    """Hourly temperatures from one model run: valid_time (UTC) and temp_f, or empty if not archived."""
+    try:
+        body = get_json(
+            SINGLE_RUN_URL,
+            {
+                "latitude": lat,
+                "longitude": lon,
+                "hourly": "temperature_2m",
+                "models": model,
+                "run": run.strftime("%Y-%m-%dT%H:%M"),
+                "forecast_hours": hours,
+                "temperature_unit": "fahrenheit",
+                "timezone": "GMT",
+            },
+            namespace="openmeteo_runs",
+            min_interval=SINGLE_RUN_INTERVAL,
+        )
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 400:
+            return pd.DataFrame({"valid_time": pd.to_datetime([], utc=True), "temp_f": []})
+        raise
+    h = body["hourly"]
+    frame = pd.DataFrame({"valid_time": pd.to_datetime(h["time"], utc=True), "temp_f": h["temperature_2m"]})
+    return frame.dropna(subset=["temp_f"]).reset_index(drop=True)

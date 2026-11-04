@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,6 +60,18 @@ GUIDANCE_LAG_HOURS = {"GFS": 5.0, "NBS": 2.0, "LAV": 1.0}
 # A station observation is treated as public this many minutes after its valid time.
 # Routine reports are at :51, so this must stay under 9 for them to count at an :00 snapshot.
 OBS_PUBLISH_MINUTES = 5
+
+# Archives that only cover part of the sample, used in the extended and exact-run tests.
+EXTRA_LAG_HOURS = {"NAM": 5.0}
+PREVIOUS_RUN_MODELS = {"ecmwf": "ecmwf_ifs025", "icon": "icon_seamless", "gem": "gem_seamless"}
+# Open-Meteo keeps individual runs only from this date. Each entry is the Open-Meteo model,
+# hours between archived cycles and the assumed hours from run time to public release.
+EXACT_RUN_START = date(2026, 4, 3)
+EXACT_RUN_MODELS = {
+    "hrrr": ("ncep_hrrr_conus", 3, 2.0),
+    "nbmx": ("ncep_nbm_conus", 3, 2.0),
+    "ecmwfx": ("ecmwf_ifs025", 6, 7.0),
+}
 
 # A market quote older than this (hours) at snapshot time is treated as stale.
 STALE_HOURS = 6.0
