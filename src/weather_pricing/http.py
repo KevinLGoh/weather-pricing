@@ -47,6 +47,7 @@ def get_json(
         except (json.JSONDecodeError, KeyError, TypeError):
             pass  # unreadable cache file (e.g. from an interrupted run): fetch it again
 
+    last_error = "no attempts made"
     for attempt in range(retries):
         # Reserve a send slot so concurrent callers stay under min_interval in aggregate.
         with _lock:
@@ -55,10 +56,12 @@ def get_json(
         time.sleep(max(0.0, slot - time.monotonic()))
         try:
             resp = _session.get(url, params=params, timeout=60)
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            last_error = repr(exc)
             time.sleep(2**attempt)
             continue
         if resp.status_code == 429 or resp.status_code >= 500:
+            last_error = f"HTTP {resp.status_code}"
             retry_after = resp.headers.get("Retry-After", "")
             time.sleep(float(retry_after) if retry_after.isdigit() else min(60, 2**attempt))
             continue
@@ -74,4 +77,4 @@ def get_json(
         finally:
             tmp.unlink(missing_ok=True)
         return body
-    raise RuntimeError(f"GET failed after {retries} attempts: {url} {params}")
+    raise RuntimeError(f"GET failed after {retries} attempts (last error: {last_error}): {url} {params}")
