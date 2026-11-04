@@ -448,7 +448,8 @@ are not touched.
 4. **Stronger weather still does not improve on the market out of sample.** CW_xgb against
    B is −0.0002 (CI −0.0015 to 0.0010). The logistic CW_logit is −0.0011 (CI −0.0023 to
    0.0000).
-5. **The claim that prices contain all the forecast's information no longer holds strictly.**
+5. **The claim that prices contain all the forecast's information no longer holds strictly**
+   (the rolling-origin evaluation below settles this more firmly).
    The encompassing regression now gives W_xgb a coefficient of 0.19 (SE 0.07, p = 0.005),
    and 0.37 (p = 0.001) at D-0 12:00. The old baseline's logistic model had −0.14 (p = 0.12),
    and its like-for-like match W_logit has 0.12 (p = 0.10) overall and 0.29 (p = 0.006) at
@@ -484,8 +485,9 @@ forecasts, in °F:
 
 - **Guidance age.** The archive keeps only four LAMP runs a day until 2026-10-28, so the
   median guidance is 2 to 10 hours old at a snapshot. The readings are about 4 minutes old.
-  Hourly guidance, HRRR and full ensembles are not included, so some of the remaining lead
-  may still be a data gap.
+  Hourly guidance, HRRR and full ensembles are not included here, so some of the remaining
+  lead may still be a data gap. "Strengthening the main finding" tests what the archives
+  allow.
 - **Assumed release delays.** GFS MOS 5 h, NBM 2 h, LAMP 1 h and observations 5 minutes are
   assumptions, not archived publication times. The sensitivity run covers the guidance
   delays.
@@ -496,6 +498,130 @@ forecasts, in °F:
   test days settled by The Weather Company the market's lead is larger (0.032 against
   about 0.01 under NWS), but that is a small sample.
 - **Not a trading result.** These are mid prices with no spread or fees. One city, one split.
+
+## Strengthening the main finding
+
+Three further tests ask whether the finding depends on one city, one split or a weather
+gap. All three keep the market as it was and try to make the case against it stronger.
+
+```bash
+python -m weather_pricing.cli build --cities CHI --start 2023-01-01 --end 2026-11-02 --name snapshots_chi
+python -m weather_pricing.cli weather-baseline --data snapshots_chi
+python -m weather_pricing.cli rolling --data snapshots snapshots_chi
+python -m weather_pricing.cli exact-runs
+```
+
+Chicago's first download takes about 35 minutes for Kalshi and 20 for the weather archives.
+The exact runs take about an hour. The main dataset and the app artifacts are not touched.
+
+**Summary.** The market's lead over the best weather model at each stage:
+
+| Test | Sample | Weather model | Market lead (95% CI) |
+|---|---|---|---|
+| Original | NY, one split | A (Open-Meteo) | 0.034 (0.029 to 0.038) |
+| Stronger baseline | NY, one split | W (NWS guidance, readings) | 0.015 (0.011 to 0.018) |
+| Replication | Chicago, one split | W | 0.017 (0.014 to 0.020) |
+| Rolling origin | Both cities, 2024-07 on | X (W + more sources) | 0.011 (0.009 to 0.013) |
+| Exact runs | Both cities, 2026-04 on | X + HRRR, NBM, ECMWF runs | 0.009 (0.006 to 0.012) |
+
+Each better test shrinks the lead, and none closes it. The rows are not strictly
+comparable, since the samples differ. On the exact-run sample itself, the runs cut the lead
+from 0.016 to 0.009.
+
+### Chicago replication
+
+Chicago settles at a different station and had no part in designing the models. Its data
+is as clean as New York's: the bracket logic reproduces all 8,411 results, and NOAA gives
+the same outcome on every contract. On the same kind of split (test period 2025-09-15 to
+2026-11-02):
+
+| Model | Brier | Log loss | ECE |
+|---|---|---|---|
+| A: Open-Meteo weather, XGBoost | 0.1331 | 0.431 | 0.026 |
+| W: stronger weather, XGBoost | 0.1183 | 0.371 | 0.008 |
+| B: market mid, renormalised | **0.1012** | **0.315** | 0.016 |
+| CW: stronger weather + market, XGBoost | 0.1017 | 0.316 | 0.011 |
+
+The market's lead over W is 0.017 (CI 0.014 to 0.020), and adding W to the market gives
+−0.0005 (CI −0.0015 to 0.0005). Both conclusions from New York hold.
+
+### Rolling-origin evaluation
+
+Each city gets 18 months of first training, then 6-month test windows from 2024-07-01,
+refitting on all earlier days each time. That is 5 windows and 855 out-of-sample city-days
+per city. Pooled intervals resample whole dates, because two cities on one date are not
+independent. X is W plus NAM MOS and three more global models (ECMWF, ICON and GEM) from
+March 2024, which also gives a multi-model spread.
+
+| Comparison (Brier difference) | New York | Chicago | Both |
+|---|---|---|---|
+| Stronger weather (X) vs Open-Meteo (A) | 0.018 | 0.017 | 0.018 (0.016 to 0.019) |
+| Extra sources (X vs W) | 0.0022 | 0.0022 | 0.0022 (0.0016 to 0.0029) |
+| Market vs X | 0.0091 | 0.0127 | 0.0109 (0.0093 to 0.0125) |
+| X added to market | +0.0007 | +0.0005 | +0.0006 (−0.0001 to 0.0012) |
+
+1. **The lead holds across time and cities.** Its interval excludes zero in 9 of the 10
+   city-windows. The exception is New York's first window (0.0013, CI −0.0028 to 0.0055).
+2. **The lead is not uniform across the day.** It is 0.006 to 0.007 at D-1 14:00 and 0.014
+   to 0.021 at D-0 12:00. Before anyone has same-day readings the edge is between a quarter
+   and a half of that size. The weather model's guidance is hours old by noon, so the D-0 figures are the less
+   trustworthy of the two.
+3. **This corrects an earlier claim.** On one split the weather forecast looked worthless
+   next to the market. Across all windows its coefficient is 0.37 (SE 0.03, p < 0.001)
+   beside a market coefficient of 0.97, so the market does not contain all of it.
+4. **That information is still worth very little.** X adds +0.0006 to the market, and a
+   blend using only earlier windows adds +0.0005 (CI −0.0002 to 0.0012, p = 0.15). Neither is
+   significant. A real signal and a negligible gain can both be true.
+5. **The market looks stronger as it matures.** All five windows, both cities:
+
+| Window from | Median spread | Stale rows | Market lead | Weather coefficient | Market coefficient |
+|---|---|---|---|---|---|
+| 2024-07 | 6c | 27% | 0.004 | 0.53 | 0.79 |
+| 2025-01 | 4c | 16% | 0.012 | 0.33 | 0.97 |
+| 2025-07 | 3c | 11% | 0.009 | 0.35 | 1.05 |
+| 2026-01 | 1c | 0.2% | 0.015 | 0.38 | 1.00 |
+| 2026-07 | 1c | 2% | 0.016 | 0.11 (p = 0.29) | 1.11 |
+
+   Weather helps where the market is thin: it adds 0.0022 (CI 0.0011 to 0.0034) on stale
+   rows and 0.0002 (CI −0.0004 to 0.0008) on rows with a spread of 2c or less. This is five
+   windows of different seasons with a shorter final one, and weather models improved too,
+   so it is suggestive and not proof of cause.
+
+### Exact-run test
+
+Open-Meteo keeps individual runs only from 2026-04-02, so this test covers 428 city-days
+and cannot retrain the models. It takes the rolling-origin predictions, which never saw
+these runs, and blends in a probability built from them. Each of 5 date blocks is fitted on
+the other 4, so later data helps earlier blocks, which can only favour the weather model.
+
+| Comparison, both cities | Brier difference (95% CI) |
+|---|---|
+| Runs added to weather | 0.0069 (0.0047 to 0.0092) |
+| Market vs weather, without the runs | 0.0160 (0.0124 to 0.0194) |
+| Market vs weather, with the runs | 0.0092 (0.0059 to 0.0124) |
+| Weather with the runs added to market | +0.0004 (−0.0005 to 0.0014) |
+
+The runs are clearly worth having: they remove about 43% of the lead on this sample. The
+lead that remains is 0.005 to 0.007 on the day before and 0.010 to 0.015 on the day itself.
+
+**What the archives could not provide.** Item by item:
+
+- **Hourly guidance:** not archived. Individual HRRR and NBM runs are 3-hourly at best, and
+  LAMP has four runs a day until 2026-10-28. Median run ages here are 3 to 7 hours for HRRR
+  and NBM, and 9 to 11 for ECMWF.
+- **Full ensembles:** Open-Meteo's ensemble API reaches back only about 90 days. The
+  multi-model spread and NBM's own spread stand in for them.
+- **Release delays:** HRRR and NBM 2 h, ECMWF 7 h and NAM 5 h are assumptions, like the earlier
+  ones.
+
+So part of the remaining lead may still be a data gap, especially on the day itself. The
+sturdiest evidence of a market edge is the 0.006 to 0.007 lead at D-1 14:00, where same-day
+data matters least, and that figure is small.
+
+**Defensible claim.** *In liquid Kalshi daily-high markets for New York and Chicago, prices
+beat every public-archive weather model we could build, and those models add almost nothing
+to prices out of sample.* The data does not show that markets beat a live forecaster with
+hourly data, and it says nothing about other weather events or longer horizons.
 
 ## Limitations
 
@@ -520,8 +646,11 @@ forecasts, in °F:
 - **Weak weather baseline.** Models A and C have no ensemble spread and no intraday
   observations (see Results). The W family adds them in a separate experiment, and the app
   does not show it yet.
-- **One test window.** The experiment uses one chronological train/test split. The next
-  robustness step is a rolling-origin evaluation.
+- **One test window in the main experiment.** Models A, B and C in the app and the main
+  results use one chronological split. The rolling-origin evaluation covers 5 windows, for
+  both cities.
+- **Two cities.** New York and Chicago are not independent on shared weather days, and the
+  other five configured cities have not been run.
 
 ## Known issues
 
@@ -535,10 +664,11 @@ forecasts, in °F:
 ## Future enhancements
 
 - A forecast source with intraday runs (removes the forecast-age limitation).
-- Hourly guidance, HRRR and full ensembles for the stronger weather baseline, and the W
-  family in the app.
-- Rolling-origin evaluation and event-level scores such as the ranked probability score.
-- More cities (Chicago first), and live scoring of open Kalshi markets.
+- Hourly guidance and full ensembles, if an archive appears, and Chicago and the W and X
+  families in the app.
+- Event-level scores such as the ranked probability score.
+- The other five configured cities, and live scoring of open Kalshi markets, which would
+  also collect hourly forecasts going forward.
 - Deep-learning models and an LLM-based rule extractor (Model D).
 
 ## Dependencies
@@ -570,7 +700,8 @@ Python standard library.
 - **NOAA NCEI GHCN-Daily**: Menne, M.J., I. Durre, B. Korzeniewski, S. McNeill,
   K. Thomas, X. Yin, S. Anthony, R. Ray, R.S. Vose, B.E. Gleason and T.G. Houston
   (2012): Global Historical Climatology Network - Daily (GHCN-Daily), Version 3. Subset
-  used: station USW00094728, New York (Central Park), elements TMAX and TMIN. NOAA
+  used: stations USW00094728, New York (Central Park), and USW00014819, Chicago (Midway),
+  elements TMAX and TMIN. NOAA
   National Climatic Data Center. doi:10.7289/V5D21VHZ. Accessed 2026-11-04 for the
   current artifacts (the app shows the date recorded in `app_artifacts/manifest.json`).
   Paper: Menne, M.J., I. Durre, R.S. Vose, B.E. Gleason and T.G. Houston (2012): An
@@ -578,7 +709,7 @@ Python standard library.
   Atmospheric and Oceanic Technology*, 29, 897–910. NOAA provides the data with no
   warranty of any kind.
 - **Iowa Environmental Mesonet** (Iowa State University): archived NWS model guidance and
-  ASOS station observations for KNYC, used in the stronger weather baseline.
+  ASOS station observations for KNYC and KMDW, used in the stronger weather baseline.
 - **Code**: the repository contains no licence file.
 
 ## Performance
@@ -610,9 +741,12 @@ src/weather_pricing/
   artifacts.py       save models, predictions, results and the manifest for the app
   inference.py       the app's data layer: contracts, predictions, note prices, evidence
   guidance.py        point-in-time NWS guidance and same-day observation features
+  guidance_plus.py   NAM, extra global models and individually archived model runs
   weather_plus.py    stronger weather models (W) and their market combination (CW)
   weather_experiment.py  market against the stronger weather models
-  cli.py             build / evaluate (--save-artifacts) / weather-baseline
+  rolling.py         rolling-origin evaluation across cities
+  exact_runs.py      test of individually archived model runs
+  cli.py             build / evaluate (--save-artifacts) / weather-baseline / rolling / exact-runs
 app/                 Streamlit app: streamlit_app.py, the three pages, shared.py
 app_artifacts/       what the app loads (built by evaluate --save-artifacts)
 docs/screenshots/    README screenshots
