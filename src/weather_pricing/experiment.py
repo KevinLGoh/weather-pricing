@@ -51,6 +51,19 @@ APP_COLUMNS = [
 ]
 
 
+def prepare_sample(df: pd.DataFrame) -> pd.DataFrame:
+    """The rows every model is scored on, with the settled temperature filled in."""
+    # Kalshi omits the settled temperature on most pre-2025 contracts (and keeps it mainly on
+    # the winning bracket), so dropping those rows would bias the sample towards Yes. NOAA's
+    # TMAX matches the settled value ~99% of the time; it only feeds the Gaussian error fit,
+    # while labels always come from Kalshi's result.
+    df = df.assign(settled_value=df["settled_value"].fillna(df["noaa_tmax"]))
+    # One common sample for every model, so score differences are not sample differences.
+    df = df.dropna(subset=["fc_tmax", "mid", "mid_norm", "settled_value"]).reset_index(drop=True)
+    df["event_id"] = df["city"] + ":" + df["target_date"].astype(str)
+    return df
+
+
 def chronological_split(df: pd.DataFrame, test_frac: float, val_frac: float = 0.2):
     dates = np.sort(df["target_date"].unique())
     cut = dates[int(len(dates) * (1 - test_frac))]
@@ -73,14 +86,7 @@ def run(
     n0 = len(df)
     data_date_range = [str(df["target_date"].min()), str(df["target_date"].max())]
     cities = sorted(str(c) for c in df["city"].unique())
-    # Kalshi omits the settled temperature on most pre-2025 contracts (and keeps it mainly on
-    # the winning bracket), so dropping those rows would bias the sample towards Yes. NOAA's
-    # TMAX matches the settled value ~99% of the time; it only feeds the Gaussian error fit,
-    # while labels always come from Kalshi's result.
-    df = df.assign(settled_value=df["settled_value"].fillna(df["noaa_tmax"]))
-    # One common sample for every model, so score differences are not sample differences.
-    df = df.dropna(subset=["fc_tmax", "mid", "mid_norm", "settled_value"]).reset_index(drop=True)
-    df["event_id"] = df["city"] + ":" + df["target_date"].astype(str)
+    df = prepare_sample(df)
     train, test, val_mask = chronological_split(df, test_frac)
     models = fit_models(train, val_mask)
     preds = predict_models(models, test)
