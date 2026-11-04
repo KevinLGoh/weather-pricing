@@ -3,6 +3,8 @@
     python -m weather_pricing.cli build --cities NY CHI --start 2025-01-01
     python -m weather_pricing.cli evaluate
     python -m weather_pricing.cli weather-baseline
+    python -m weather_pricing.cli rolling --data snapshots snapshots_chi
+    python -m weather_pricing.cli exact-runs
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("--cities", nargs="+", default=DEFAULT_CITIES)
     b.add_argument("--start", type=date.fromisoformat, default=date(2025, 1, 1))
     b.add_argument("--end", type=date.fromisoformat, default=None)
+    b.add_argument("--name", default="snapshots", help="file name under data/processed, so another city can sit beside the main dataset")
 
     e = sub.add_parser("evaluate", help="fit models A/B/C, score them and value the instrument")
     e.add_argument("--test-frac", type=float, default=0.3)
@@ -36,6 +39,15 @@ def main(argv: list[str] | None = None) -> None:
     w.add_argument("--test-frac", type=float, default=0.3)
     w.add_argument("--n-boot", type=int, default=2000)
     w.add_argument("--lag-scale", type=float, default=1.0, help="multiply the assumed guidance release delays")
+    w.add_argument("--data", default="snapshots", help="dataset name under data/processed")
+
+    r = sub.add_parser("rolling", help="refit on earlier days and score the next window, per city")
+    r.add_argument("--data", nargs="+", default=["snapshots"], help="dataset names under data/processed")
+    r.add_argument("--n-boot", type=int, default=2000)
+    r.add_argument("--report-only", action="store_true", help="rebuild the tables from the saved predictions")
+
+    x = sub.add_parser("exact-runs", help="test individually archived model runs on the rolling predictions")
+    x.add_argument("--n-boot", type=int, default=2000)
 
     args = p.parse_args(argv)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -43,9 +55,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "build":
         from .dataset import build, quality_report
 
-        df = build(args.cities, args.start, args.end)
+        df = build(args.cities, args.start, args.end, args.name)
         report = quality_report(df)
-        (RESULTS_DIR / "data_quality.json").write_text(json.dumps(report, indent=2, default=str))
+        # The app artifacts copy data_quality.json, so another dataset must not replace it.
+        suffix = "" if args.name == "snapshots" else f"_{args.name}"
+        (RESULTS_DIR / f"data_quality{suffix}.json").write_text(json.dumps(report, indent=2, default=str))
         print(json.dumps(report, indent=2, default=str))
 
     elif args.cmd == "evaluate":
@@ -67,8 +81,30 @@ def main(argv: list[str] | None = None) -> None:
         from .weather_experiment import run
 
         name = "weather_baseline" if args.lag_scale == 1.0 else f"weather_baseline_lag{args.lag_scale:g}"
-        df = enrich(pd.read_parquet(PROCESSED_DIR / "snapshots.parquet"), lag_scale=args.lag_scale)
+        if args.data != "snapshots":
+            name = f"{name}_{args.data.removeprefix('snapshots_')}"
+        df = enrich(pd.read_parquet(PROCESSED_DIR / f"{args.data}.parquet"), lag_scale=args.lag_scale)
         print(run(df, RESULTS_DIR / name, test_frac=args.test_frac, n_boot=args.n_boot))
+
+    elif args.cmd == "rolling":
+        from .guidance import enrich
+        from .guidance_plus import enrich_extended
+        from .rolling import report, run
+
+        if args.report_only:
+            saved = pd.read_parquet(RESULTS_DIR / "rolling" / "oos_predictions.parquet")
+            print(report(saved, RESULTS_DIR / "rolling", n_boot=args.n_boot))
+            return
+        df = pd.concat([pd.read_parquet(PROCESSED_DIR / f"{name}.parquet") for name in args.data], ignore_index=True)
+        print(run(enrich_extended(enrich(df)), RESULTS_DIR / "rolling", n_boot=args.n_boot))
+
+    elif args.cmd == "exact-runs":
+        from .exact_runs import run
+        from .guidance_plus import enrich_exact
+
+        oos = pd.read_parquet(RESULTS_DIR / "rolling" / "oos_predictions.parquet")
+        features = enrich_exact(oos[["ticker", "snapshot", "city", "target_date", "snapshot_ts"]])
+        print(run(oos, features, RESULTS_DIR / "exact_runs", n_boot=args.n_boot))
 
 
 if __name__ == "__main__":

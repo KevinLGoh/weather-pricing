@@ -214,14 +214,14 @@ def add_market_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def build(city_keys: list[str], start: date, end: date | None = None) -> pd.DataFrame:
+def build(city_keys: list[str], start: date, end: date | None = None, name: str = "snapshots") -> pd.DataFrame:
     frames = []
     for key in city_keys:
         print(f"Building {key} ...", flush=True)
         frames.append(build_city(CITIES[key], start, end))
     df = pd.concat([f for f in frames if not f.empty], ignore_index=True)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(PROCESSED_DIR / "snapshots.parquet", index=False)
+    df.to_parquet(PROCESSED_DIR / f"{name}.parquet", index=False)
     return df
 
 
