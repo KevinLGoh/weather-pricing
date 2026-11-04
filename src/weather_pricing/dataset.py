@@ -234,7 +234,9 @@ def quality_report(df: pd.DataFrame) -> dict:
     settled_pays = [
         rules.pays_yes(v, lo, hi) for v, lo, hi in zip(settled_ok["settled_value"], settled_ok["low"], settled_ok["high"])
     ]
-    events = df.drop_duplicates("event_ticker")
+    # Kalshi often fills the settled temperature on one contract only, so take each event's
+    # first non-blank value rather than its first row.
+    events = df.groupby("event_ticker")[["settled_value", "noaa_tmax"]].first()
     temp_diff = (events["settled_value"] - events["noaa_tmax"]).dropna()
     return {
         "rows": len(df),
