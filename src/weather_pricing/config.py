@@ -25,6 +25,7 @@ class City:
     lat: float
     lon: float
     tz: str
+    icao: str  # airport-style code used by the NWS guidance and observation archives
 
 
 # Coordinates are the settlement stations, not city centres: Kalshi settles on a single
@@ -32,13 +33,13 @@ class City:
 CITIES: dict[str, City] = {
     c.key: c
     for c in [
-        City("NY", "New York (Central Park)", "KXHIGHNY", "CLINYC", "USW00094728", 40.7789, -73.9692, "America/New_York"),
-        City("CHI", "Chicago (Midway)", "KXHIGHCHI", "CLIMDW", "USW00014819", 41.7861, -87.7522, "America/Chicago"),
-        City("MIA", "Miami (MIA)", "KXHIGHMIA", "CLIMIA", "USW00012839", 25.7881, -80.3169, "America/New_York"),
-        City("AUS", "Austin (Bergstrom)", "KXHIGHAUS", "CLIAUS", "USW00013904", 30.1831, -97.6799, "America/Chicago"),
-        City("DEN", "Denver (DIA)", "KXHIGHDEN", "CLIDEN", "USW00003017", 39.8466, -104.6562, "America/Denver"),
-        City("PHL", "Philadelphia (PHL)", "KXHIGHPHIL", "CLIPHL", "USW00013739", 39.8733, -75.2268, "America/New_York"),
-        City("LAX", "Los Angeles (LAX)", "KXHIGHLAX", "CLILAX", "USW00023174", 33.9381, -118.3889, "America/Los_Angeles"),
+        City("NY", "New York (Central Park)", "KXHIGHNY", "CLINYC", "USW00094728", 40.7789, -73.9692, "America/New_York", "KNYC"),
+        City("CHI", "Chicago (Midway)", "KXHIGHCHI", "CLIMDW", "USW00014819", 41.7861, -87.7522, "America/Chicago", "KMDW"),
+        City("MIA", "Miami (MIA)", "KXHIGHMIA", "CLIMIA", "USW00012839", 25.7881, -80.3169, "America/New_York", "KMIA"),
+        City("AUS", "Austin (Bergstrom)", "KXHIGHAUS", "CLIAUS", "USW00013904", 30.1831, -97.6799, "America/Chicago", "KAUS"),
+        City("DEN", "Denver (DIA)", "KXHIGHDEN", "CLIDEN", "USW00003017", 39.8466, -104.6562, "America/Denver", "KDEN"),
+        City("PHL", "Philadelphia (PHL)", "KXHIGHPHIL", "CLIPHL", "USW00013739", 39.8733, -75.2268, "America/New_York", "KPHL"),
+        City("LAX", "Los Angeles (LAX)", "KXHIGHLAX", "CLILAX", "USW00023174", 33.9381, -118.3889, "America/Los_Angeles", "KLAX"),
     ]
 }
 
@@ -51,6 +52,13 @@ SNAPSHOTS: list[tuple[int, int]] = [(1, 14), (1, 22), (0, 8), (0, 12)]
 # Assumed delay between an NWP run's initialisation time and its public availability.
 NWP_AVAILABILITY_HOURS = 6
 MAX_PREVIOUS_DAY = 5  # Open-Meteo previous-runs exposes previous_day1..7; we use 1..5.
+
+# Assumed hours between a guidance run's nominal time and its public release, set on the
+# cautious side of the NWS schedules: GFS MOS, NBM text (NBS) and LAMP (LAV).
+GUIDANCE_LAG_HOURS = {"GFS": 5.0, "NBS": 2.0, "LAV": 1.0}
+# A station observation is treated as public this many minutes after its valid time.
+# Routine reports are at :51, so this must stay under 9 for them to count at an :00 snapshot.
+OBS_PUBLISH_MINUTES = 5
 
 # A market quote older than this (hours) at snapshot time is treated as stale.
 STALE_HOURS = 6.0

@@ -38,6 +38,7 @@ def get_json(
     min_interval: float = 0.1,
     use_cache: bool = True,
     retries: int = 8,
+    as_text: bool = False,
 ) -> Any:
     params = {k: v for k, v in (params or {}).items() if v is not None}
     path = _cache_path(namespace, url, params)
@@ -66,7 +67,7 @@ def get_json(
             time.sleep(float(retry_after) if retry_after.isdigit() else min(60, 2**attempt))
             continue
         resp.raise_for_status()
-        body = resp.json()
+        body = resp.text if as_text else resp.json()
         path.parent.mkdir(parents=True, exist_ok=True)
         # Write to a temp file and rename it into place, so an interrupted write never
         # leaves a truncated cache file behind.
