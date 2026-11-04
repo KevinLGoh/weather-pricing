@@ -195,6 +195,7 @@ current values.
 | Kalshi | `/markets`, `/historical/markets`, `.../candlesticks` (hourly) | Contract terms, outcomes, bid/ask/last, volume |
 | Open-Meteo | previous-runs API, `temperature_2m_previous_day1..5` | Archived NWP forecasts at a known run age |
 | NOAA NCEI | Access Data Service, GHCN-Daily `TMAX` | Independent check of outcomes, persistence feature |
+| Iowa Environmental Mesonet | ASOS observations and archived GFS MOS, NBM and LAMP guidance | Stronger weather baseline |
 
 ### Results of the feasibility audit (plan Weeks 1–2)
 
@@ -361,8 +362,8 @@ market advantage comes from nowcasting.
 Thus, the data supports this claim: *Kalshi prices contain all the information in this
 public deterministic NWP forecast (Open-Meteo best match) for this type of event.* These results are about this
 weather baseline only; they are not evidence that prediction markets are better than
-meteorology in general. The next test is a stronger
-weather model with ensemble spread, NBM and intraday observations up to the snapshot.
+meteorology in general. "Stronger weather baseline" below repeats the test with NWS
+guidance and same-day observations.
 
 ### Reproduction (2026-11-04)
 
@@ -392,6 +393,110 @@ the persistence feature on 24 of the 9,918 test rows. Only the weather-only and 
 predictions on those rows change. No result reported above changes at the precision
 shown, but the worked example is one of those rows.
 
+## Stronger weather baseline
+
+The results above leave one question open: how much of the market's lead comes from the
+weak Open-Meteo baseline? This experiment gives the weather model what a forecaster could
+actually see at each snapshot, on the same 9,918 test rows and the same split. Models A, B
+and C are unchanged.
+
+```bash
+python -m weather_pricing.cli weather-baseline
+```
+
+The first run downloads the Iowa Environmental Mesonet archives (about 20 minutes at one
+request every 6 seconds). Results go to `results/weather_baseline/`. The app's artifacts
+are not touched.
+
+**What the new model (W) sees.** Each value was public at the snapshot:
+
+- GFS MOS and NBM forecasts of the daily high, plus NBM's own uncertainty estimate.
+- LAMP hourly temperatures for the rest of the day.
+- The Central Park readings so far today, which also set a floor: the final high cannot
+  end below what the thermometer already read.
+
+`W_rule` turns these into a predictive distribution for the daily high. `W_logit` and
+`W_xgb` recalibrate it, and `CW_*` add the market features.
+
+| Model | Brier | Log loss | ECE |
+|---|---|---|---|
+| A: Open-Meteo weather, XGBoost | 0.1278 | 0.412 | 0.018 |
+| W: stronger weather, rule | 0.1124 | 0.352 | 0.018 |
+| W: stronger weather, logistic | 0.1114 | 0.348 | 0.016 |
+| W: stronger weather, XGBoost | 0.1088 | 0.340 | 0.011 |
+| B: market mid, renormalised | **0.0941** | 0.293 | 0.015 |
+| CW: stronger weather + market, XGBoost | 0.0943 | **0.292** | 0.010 |
+| Cross-fitted blend of W_xgb and B | 0.0943 | 0.292 | **0.005** |
+
+1. **The old baseline did overstate the market's lead.** W beats A by 0.019 Brier (95% CI
+   0.015 to 0.023). The market's lead over the best weather model falls from 0.034 to
+   0.015, a drop of about 56%.
+2. **The market still clearly wins.** Its lead over W_xgb is 0.015 (CI 0.011 to 0.018),
+   or 14% of W_xgb's Brier score.
+3. **The lead no longer grows through the day.** Against A it rose from 0.022 at D-1 14:00
+   to 0.049 at D-0 12:00. Against W it stays between 0.013 and 0.017, so the growth was
+   mostly the old baseline's missing same-day information. The lead of 0.013 at D-1 14:00,
+   when nobody has same-day readings, is the cleanest evidence of a market edge.
+
+| Snapshot | A_xgb | W_xgb | Market | Market lead over W (95% CI) |
+|---|---|---|---|---|
+| D-1 14:00 | 0.1315 | 0.1219 | 0.1094 | 0.013 (0.009 to 0.016) |
+| D-1 22:00 | 0.1297 | 0.1154 | 0.1023 | 0.013 (0.009 to 0.017) |
+| D-0 08:00 | 0.1250 | 0.1055 | 0.0883 | 0.017 (0.013 to 0.022) |
+| D-0 12:00 | 0.1250 | 0.0924 | 0.0764 | 0.016 (0.010 to 0.022) |
+
+4. **Stronger weather still does not improve on the market out of sample.** CW_xgb against
+   B is −0.0002 (CI −0.0015 to 0.0010). The logistic CW_logit is −0.0011 (CI −0.0023 to
+   0.0000).
+5. **The claim that prices contain all the forecast's information no longer holds strictly.**
+   The encompassing regression now gives W_xgb a coefficient of 0.19 (SE 0.07, p = 0.005),
+   and 0.37 (p = 0.001) at D-0 12:00. The old baseline's logistic model had −0.14 (p = 0.12),
+   and its like-for-like match W_logit has 0.12 (p = 0.10) overall and 0.29 (p = 0.006) at
+   D-0 12:00. The regression is fitted on the test rows, so the blend above checks it out of sample,
+   fitting each of 5 date blocks on the other 4. The blend does not beat the market overall
+   (−0.0002, CI −0.0012 to 0.0008) or at D-0 12:00 (+0.0007, CI −0.0008 to 0.0022). It is
+   the best calibrated model, though. So the signal is real enough to detect but too small
+   to lower the score reliably. These regressions are 10 tests, so read single p-values
+   with care.
+6. **Valuation.** The note's mean absolute value gap to the market falls from \$60 with A
+   to \$39 with W. The choice of weather model still moves the note's value by a lot on
+   individual contracts.
+
+**Sensitivity.** Doubling the assumed guidance release delays (`--lag-scale 2`) leaves the
+conclusions unchanged: the market's lead is 0.014 (CI 0.011 to 0.017), and CW_xgb against
+the market is +0.0002 (CI −0.0011 to 0.0015). W_xgb came out slightly better with the longer delays
+(0.1081), which cannot be real information. It shows XGBoost refits move scores by
+about 0.0007, so differences smaller than that mean nothing.
+
+**Audit.** All four forecast sources cover every test row, and same-day readings cover
+every D-0 row. The observed floor was above the settled temperature on 0.25% of the 2,754
+checks, and only one contract row paid Yes below its floor. Mean absolute error of the
+forecasts, in °F:
+
+| Snapshot | Open-Meteo | GFS MOS | NBM | LAMP | W centre |
+|---|---|---|---|---|---|
+| D-1 14:00 | 3.27 | 2.29 | 2.19 | 1.95 | 2.04 |
+| D-1 22:00 | 2.89 | 2.19 | 2.08 | 1.67 | 1.78 |
+| D-0 08:00 | 2.71 | 2.10 | 2.07 | 1.67 | 1.69 |
+| D-0 12:00 | 2.71 | 2.10 | 2.07 | 1.64 | 1.37 |
+
+**What this does not settle.** The weather model is still behind a live trader:
+
+- **Guidance age.** The archive keeps only four LAMP runs a day until 2026-10-28, so the
+  median guidance is 2 to 10 hours old at a snapshot. The readings are about 4 minutes old.
+  Hourly guidance, HRRR and full ensembles are not included, so some of the remaining lead
+  may still be a data gap.
+- **Assumed release delays.** GFS MOS 5 h, NBM 2 h, LAMP 1 h and observations 5 minutes are
+  assumptions, not archived publication times. The sensitivity run covers the guidance
+  delays.
+- **Strike placement.** Kalshi sets its brackets around its expected temperature, so even
+  the weather-only models see a small market signal in the contract terms. This favours
+  the weather models, not the market.
+- **Settlement source.** W's error model is mostly trained on NWS settlement. On the 81
+  test days settled by The Weather Company the market's lead is larger (0.032 against
+  about 0.01 under NWS), but that is a small sample.
+- **Not a trading result.** These are mid prices with no spread or fees. One city, one split.
+
 ## Limitations
 
 - **Forecast age.** The builder cannot use a run younger than `previous_day1`, so at the
@@ -412,8 +517,9 @@ shown, but the worked example is one of those rows.
 - **Settled temperatures before 2025.** Kalshi does not give most of these values. NOAA
   TMAX gives the missing values. The experiment uses these values only to fit the
   Gaussian error model. The labels always come from the Kalshi result.
-- **Weak weather baseline.** The weather model has no ensemble spread and no intraday
-  observations (see Results).
+- **Weak weather baseline.** Models A and C have no ensemble spread and no intraday
+  observations (see Results). The W family adds them in a separate experiment, and the app
+  does not show it yet.
 - **One test window.** The experiment uses one chronological train/test split. The next
   robustness step is a rolling-origin evaluation.
 
@@ -429,7 +535,8 @@ shown, but the worked example is one of those rows.
 ## Future enhancements
 
 - A forecast source with intraday runs (removes the forecast-age limitation).
-- Ensemble spread, NBM guidance and intraday observations for the weather baseline.
+- Hourly guidance, HRRR and full ensembles for the stronger weather baseline, and the W
+  family in the app.
 - Rolling-origin evaluation and event-level scores such as the ranked probability score.
 - More cities (Chicago first), and live scoring of open Kalshi markets.
 - Deep-learning models and an LLM-based rule extractor (Model D).
@@ -470,6 +577,8 @@ Python standard library.
   overview of the Global Historical Climatology Network-Daily database. *Journal of
   Atmospheric and Oceanic Technology*, 29, 897–910. NOAA provides the data with no
   warranty of any kind.
+- **Iowa Environmental Mesonet** (Iowa State University): archived NWS model guidance and
+  ASOS station observations for KNYC, used in the stronger weather baseline.
 - **Code**: the repository contains no licence file.
 
 ## Performance
@@ -491,7 +600,7 @@ Two caches keep the slow parts fast:
 src/weather_pricing/
   config.py          cities, snapshot times, availability assumptions
   http.py            cached, throttled GET
-  collect/           kalshi.py, openmeteo.py, noaa.py
+  collect/           kalshi.py, openmeteo.py, noaa.py, iem.py
   rules.py           rule-text extraction and validation, bracket logic
   dataset.py         point-in-time snapshot builder and data-quality report
   models.py          rule / A / B / C models
@@ -500,7 +609,10 @@ src/weather_pricing/
   experiment.py      split, fit, score, value, write results/
   artifacts.py       save models, predictions, results and the manifest for the app
   inference.py       the app's data layer: contracts, predictions, note prices, evidence
-  cli.py             build / evaluate (--save-artifacts)
+  guidance.py        point-in-time NWS guidance and same-day observation features
+  weather_plus.py    stronger weather models (W) and their market combination (CW)
+  weather_experiment.py  market against the stronger weather models
+  cli.py             build / evaluate (--save-artifacts) / weather-baseline
 app/                 Streamlit app: streamlit_app.py, the three pages, shared.py
 app_artifacts/       what the app loads (built by evaluate --save-artifacts)
 docs/screenshots/    README screenshots
