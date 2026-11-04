@@ -15,11 +15,11 @@
   },
   "rule_text_mismatches": 0,
   "bracket_logic_matches_result": 1.0,
-  "noaa_outcome_matches_result": 0.9997614788312462,
+  "noaa_outcome_matches_result": 0.9997616493862471,
   "settled_minus_noaa_tmax": {
-    "share_equal": 0.9903536977491961,
-    "share_within_1F": 0.9983922829581994,
-    "n": 622
+    "share_equal": 0.9954921111945906,
+    "share_within_1F": 0.9992486851990984,
+    "n": 1331
   },
   "missing_forecast_rows": 522,
   "stale_rows": 9783,

@@ -30,11 +30,11 @@
     "rate": 0.04,
     "wang_lambda": 0.0
   },
-  "created_utc": "2026-11-03T20:42:01+00:00",
-  "git_commit": "ef7886a4e9aad26c2ff60eec337a0df927f5153e",
-  "src_tree": "483f8cce1008d290247d3c8feecfc6257a6b2e64",
+  "created_utc": "2026-11-04T13:38:52+00:00",
+  "git_commit": "1809b9db6e9a818570b8ef471075f1bfb16a6d3d",
+  "src_tree": "fd003715747a45e67bd02af2212e8cb7eecdb6c9",
   "git_dirty": false,
-  "python": "3.12.16",
+  "python": "3.12.7",
   "packages": {
     "numpy": "2.5.4",
     "pandas": "3.1.0",
@@ -43,7 +43,7 @@
     "xgboost": "3.4.1",
     "pyarrow": "26.0.1"
   },
-  "noaa_accessed": "2026-11-03",
+  "noaa_accessed": "2026-11-04",
   "predictions_rows": 9918,
   "models": [
     "A_logit",

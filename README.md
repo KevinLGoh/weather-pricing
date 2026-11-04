@@ -145,18 +145,22 @@ D-1 14:00 (34 hours before the day ends) and the bracket 65–66°F:
 
 - The market quote is a mid price of \$0.49 (bid \$0.48, ask \$0.51) with a spread of
   \$0.03.
-- The probabilities are 20.0 % (rule-based Gaussian), 29.4 % (weather-only, XGBoost),
-  48.1 % (market mid, renormalised) and 53.2 % (combined, XGBoost).
+- The probabilities are 20.0 % (rule-based Gaussian), 26.6 % (weather-only, XGBoost),
+  48.1 % (market mid, renormalised) and 51.7 % (combined, XGBoost).
 - The outcome: the daily high was 66°F, so the contract paid Yes.
 
 Press **Price this contract**. With the default note (principal \$1,000, loss 50 % of
-the principal, coupon \$0, λ = 0) the present value is \$852.87 under the weather-only
-XGBoost model, \$759.56 under the renormalised market mid and \$733.95 under the
-combined XGBoost model: the combined model values the note \$118.92 lower than the
-weather-only baseline. With λ = 0.25 the three values are \$807.26, \$709.98 and
-\$685.25. Model Evidence then shows how these models score on the whole test period.
+the principal, coupon \$0, λ = 0) the present value is \$866.68 under the weather-only
+XGBoost model, \$759.56 under the renormalised market mid and \$741.29 under the
+combined XGBoost model: the combined model values the note \$125.39 lower than the
+weather-only baseline. With λ = 0.25 the three values are \$822.75, \$709.98 and
+\$692.26. Model Evidence then shows how these models score on the whole test period.
 
-**Screenshots** (in `docs/screenshots/`):
+**Screenshots** (in `docs/screenshots/`). The Contract Explorer and Note Pricer
+screenshots predate the artifact refresh described under "Reproduction", so their
+weather-only and combined figures differ slightly from the worked example above (for
+example, weather-only XGBoost shows 29.4 % instead of 26.6 %). The text above has the
+current values.
 
 - Contract Explorer with the worked-example contract: selectors, quote, probabilities by
   family, outcome.
@@ -302,6 +306,8 @@ forecast hours. The data quality is good:
 
 - The bracket logic gives the same result as Kalshi for 100% of contracts.
 - NOAA TMAX gives the same outcome for 99.98% of contracts.
+- Where Kalshi reports a settled temperature, NOAA TMAX equals it on 99.55% of the 1,331
+  city-days that have both values, and is within 1°F on 99.92%.
 - The rule text and the strikes agree for all contracts.
 - 40 rows (0.1%) belong to an event whose brackets were not all quoted at that snapshot;
   they keep the raw mid instead of the renormalised one.
@@ -380,6 +386,12 @@ run hold. The differences:
 - The separate effect of the two rule changes was not measured: that would need a build
   with the old code.
 
+The artifacts were then rebuilt with the same code and settings, using NOAA data
+accessed on 2026-11-04. NOAA had published some recent daily highs by then, which fills
+the persistence feature on 24 of the 9,918 test rows. Only the weather-only and combined
+predictions on those rows change. No result reported above changes at the precision
+shown, but the worked example is one of those rows.
+
 ## Limitations
 
 - **Forecast age.** The builder cannot use a run younger than `previous_day1`, so at the
@@ -452,7 +464,7 @@ Python standard library.
   K. Thomas, X. Yin, S. Anthony, R. Ray, R.S. Vose, B.E. Gleason and T.G. Houston
   (2012): Global Historical Climatology Network - Daily (GHCN-Daily), Version 3. Subset
   used: station USW00094728, New York (Central Park), elements TMAX and TMIN. NOAA
-  National Climatic Data Center. doi:10.7289/V5D21VHZ. Accessed 2026-11-03 for the
+  National Climatic Data Center. doi:10.7289/V5D21VHZ. Accessed 2026-11-04 for the
   current artifacts (the app shows the date recorded in `app_artifacts/manifest.json`).
   Paper: Menne, M.J., I. Durre, R.S. Vose, B.E. Gleason and T.G. Houston (2012): An
   overview of the Global Historical Climatology Network-Daily database. *Journal of
