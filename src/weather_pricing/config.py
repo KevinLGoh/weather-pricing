@@ -16,7 +16,10 @@ RESULTS_DIR = ROOT / "results"
 class City:
     key: str
     name: str
-    series: str  # Kalshi series ticker for daily max temperature
+    # Kalshi series ticker for daily max temperature. For NY, series KXHIGHNY also returns
+    # the markets listed as HIGHNY-... before 24 Oct 2024; asking for series HIGHNY returns
+    # nothing (checked 2026-11-04).
+    series: str
     cli_code: str  # NWS climate-report code that Kalshi's rules cite, e.g. CLINYC
     ghcnd: str  # NOAA GHCN-Daily station used for verification
     lat: float

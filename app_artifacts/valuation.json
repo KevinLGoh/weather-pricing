@@ -1,0 +1,29 @@
+{
+  "note": {
+    "principal": 1000.0,
+    "loss_fraction": 0.5,
+    "coupon": 0.0
+  },
+  "rate": 0.04,
+  "wang_lambda": 0.0,
+  "mean_abs_value_change_A_to_C": 63.32852220902558,
+  "p90_abs_value_change_A_to_C": 142.92233560247857,
+  "share_rows_change_over_$5": 0.910768300060496,
+  "rmse_vs_realised": {
+    "A_xgb": 178.7083520558172,
+    "B_market_norm": 153.3385581598547,
+    "C_xgb": 154.10129467139254
+  },
+  "mean_value": {
+    "A_xgb": 916.2219210716761,
+    "B_market_norm": 916.5265835761387,
+    "C_xgb": 910.8859969530721
+  },
+  "mean_realised": 916.5412569159467,
+  "wang_grid_mean_value_C_xgb": {
+    "0.0": 910.8859969530721,
+    "0.1": 902.1037432730262,
+    "0.25": 888.1076307246555,
+    "0.5": 862.7577459160738
+  }
+}

@@ -1,0 +1,3 @@
+# For development and the test suite: the app requirements plus pytest.
+-r requirements.txt
+pytest==9.2.0

@@ -5,3 +5,9 @@ __pycache__/
 data/raw/
 data/processed/
 results/
+# Local settings and secrets; .env.example documents them.
+.env
+.env.*
+!.env.example
+# Output of a local non-editable build of the package.
+build/

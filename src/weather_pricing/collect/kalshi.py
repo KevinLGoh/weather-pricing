@@ -2,7 +2,8 @@
 
 Settled markets live in two places: those settled after the exchange's historical cutoff
 are served by /markets, older ones only by /historical/markets. The same split applies
-to candlesticks.
+to candlesticks. A series listing also includes markets from before the KX prefix was
+added (for NY, event tickers HIGHNY-... under series KXHIGHNY).
 """
 
 from __future__ import annotations
