@@ -36,6 +36,8 @@ RESULT_FILES = [
     "data_quality.json",
 ]
 
+DIRTY_STATUS_ARGS = ("--porcelain", "--untracked-files=no", "--", ".", f":(exclude){ARTIFACTS_DIR.name}")
+
 PACKAGES = ["numpy", "pandas", "scikit-learn", "scipy", "xgboost", "pyarrow"]
 
 
@@ -55,15 +57,16 @@ def git_info() -> dict:
     """Commit the artifacts were built from, and whether tracked files had changes.
 
     `src_tree` is the hash of the src/ folder's content. It is the same in every copy of
-    the repo with identical code, even where commit hashes differ. Untracked files (such
-    as app_artifacts/ itself) do not count as changes. If ROOT is not the top of a git
-    repo (e.g. a copy installed elsewhere), every value is "unknown", so another
-    repo's commit is never recorded.
+    the repo with identical code, even where commit hashes differ. Untracked files and
+    app_artifacts/ itself do not count as changes: a rebuild overwrites those tracked
+    files, which says nothing about the code it ran. If ROOT is not the top of a git repo
+    (e.g. a copy installed elsewhere), every value is "unknown", so another repo's commit
+    is never recorded.
     """
     top = _git("rev-parse", "--show-toplevel")
     if top == "unknown" or Path(top).resolve() != ROOT.resolve():
         return {"git_commit": "unknown", "src_tree": "unknown", "git_dirty": "unknown"}
-    status = _git("status", "--porcelain", "--untracked-files=no")
+    status = _git("status", *DIRTY_STATUS_ARGS)
     return {
         "git_commit": _git("rev-parse", "HEAD"),
         "src_tree": _git("rev-parse", "HEAD:src"),

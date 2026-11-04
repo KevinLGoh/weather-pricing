@@ -24,7 +24,7 @@ def _fake_git(commit="abc123", tree="def456", status="", calls=None, toplevel=st
         ("rev-parse", "--show-toplevel"): toplevel,
         ("rev-parse", "HEAD"): commit,
         ("rev-parse", "HEAD:src"): tree,
-        ("status", "--porcelain", "--untracked-files=no"): status,
+        ("status", *artifacts.DIRTY_STATUS_ARGS): status,
     }
 
     def fake(*args):
@@ -107,12 +107,37 @@ def test_git_dirty_ignores_untracked_files(monkeypatch):
     calls = []
     monkeypatch.setattr(artifacts, "_git", _fake_git(status="", calls=calls))
     assert artifacts.git_info()["git_dirty"] is False
-    assert ("status", "--porcelain", "--untracked-files=no") in calls
-    assert all(c[0] != "status" or c == ("status", "--porcelain", "--untracked-files=no") for c in calls)
+    status_call = ("status", *artifacts.DIRTY_STATUS_ARGS)
+    assert status_call in calls
+    assert all(c[0] != "status" or c == status_call for c in calls)
     monkeypatch.setattr(artifacts, "_git", _fake_git(status=" M src/weather_pricing/models.py"))
     assert artifacts.git_info()["git_dirty"] is True
     monkeypatch.setattr(artifacts, "_git", _fake_git(status="unknown"))
     assert artifacts.git_info()["git_dirty"] == "unknown"
+
+
+def test_git_dirty_ignores_rebuilt_artifacts_but_not_code(tmp_path, monkeypatch):
+    def git(*args):
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", str(tmp_path), *args],
+            check=True,
+            capture_output=True,
+        )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "app_artifacts").mkdir()
+    (tmp_path / "src" / "code.py").write_text("a = 1\n")
+    (tmp_path / "app_artifacts" / "scores.csv").write_text("old\n")
+    git("init")
+    git("add", ".")
+    git("commit", "-m", "init")
+    monkeypatch.setattr(artifacts, "ROOT", tmp_path)
+
+    assert artifacts.git_info()["git_dirty"] is False
+    (tmp_path / "app_artifacts" / "scores.csv").write_text("new\n")
+    assert artifacts.git_info()["git_dirty"] is False
+    (tmp_path / "src" / "code.py").write_text("a = 2\n")
+    assert artifacts.git_info()["git_dirty"] is True
 
 
 def test_missing_results_file_is_skipped_not_fatal(tmp_path, monkeypatch):
