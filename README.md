@@ -165,27 +165,27 @@ and \$736.63 under the extended weather + market model, which values the note \$
 lower than the baseline. With λ = 0.25 the three values are \$807.00, \$709.98 and
 \$687.80. Model Evidence then shows how these models score across cities and windows.
 
-**Screenshots** (in `docs/screenshots/`). These predate Chicago and the stronger weather
-models, so they show New York with Models A, B and C only, and their figures differ from
-the worked example above. The text above has the current values. To retake all six, start
-the app on port 8599 and run `python scripts/take_screenshots.py` (it needs `pip install
-playwright` and Google Chrome). Then remove this note.
+**Screenshots** (in `docs/screenshots/`). To retake all six, start the app on port 8599 and
+run `python scripts/take_screenshots.py` (it needs `pip install playwright` and Google
+Chrome).
 
 - Contract Explorer with the worked-example contract: selectors, quote, probabilities by
   family, outcome.
 
   ![Contract Explorer](docs/screenshots/01-contract-explorer.png)
 
-- Note Pricer after "Price this contract": principal 1,000, loss 50 %, coupon 0,
-  λ 0.25, baseline weather-only XGBoost.
+- Note Pricer after "Price this contract": principal 1,000, loss 50 %, coupon 0, λ 0,
+  baseline extended weather XGBoost.
 
   ![Note Pricer](docs/screenshots/02-note-pricer.png)
 
-- Model Evidence: scores, bootstrap intervals, encompassing regression and conclusion.
+- Model Evidence: the market's lead across better tests, the conclusion, and the
+  rolling-origin and exact-run tables.
 
   ![Model Evidence, scores](docs/screenshots/03-model-evidence-scores.png)
 
-- Model Evidence: calibration chart and results by snapshot.
+- Model Evidence for Chicago: scores, comparisons, encompassing regressions, calibration
+  and results by snapshot.
 
   ![Model Evidence, calibration](docs/screenshots/04-model-evidence-calibration.png)
 
@@ -664,7 +664,6 @@ hourly data, and it says nothing about other weather events or longer horizons.
 
 - The app covers the test period only (2025-09-15 to 2026-11-02 for both cities in the
   current artifacts), because only those predictions are out-of-sample.
-- The README screenshots predate Chicago and the stronger weather models.
 - A rebuild of the data needs the network (see Quick start); only `evaluate` and the app
   run offline.
 - On Streamlit Community Cloud the Python version is chosen in the app's settings, not
