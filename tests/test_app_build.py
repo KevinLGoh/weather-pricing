@@ -94,6 +94,24 @@ def test_build_writes_one_evidence_folder_per_city_and_the_finding_tables(built)
     assert not (out / "scores.csv").exists()  # results now live per city
 
 
+def test_fitted_models_stay_out_of_the_artifacts_but_are_kept_locally(built):
+    out, manifest = built
+    assert not (out / "models.pkl").exists()
+    assert "models.pkl" not in manifest["files"]
+    models = artifacts.load_models(out.parent / "results" / "app" / "models.pkl")
+    assert set(models) == {"CHI", "NY"}
+    assert {"stronger", "extended"} == set(models["NY"])
+
+
+def test_a_build_removes_a_models_file_left_by_an_earlier_one(tmp_path, monkeypatch):
+    out = _mkdir(tmp_path / "out")
+    (out / "models.pkl").write_bytes(b"old")
+    monkeypatch.setattr(artifacts, "RAW_DIR", tmp_path / "raw")
+    monkeypatch.setattr(artifacts, "_git", _fake_git)
+    artifacts.save_cities(out, [], pd.DataFrame({"a": [1]}), {}, {}, {})
+    assert not (out / "models.pkl").exists()
+
+
 def test_each_city_keeps_its_own_data_quality_report(use):
     assert inference.load_evidence("NY")["data_quality"] == {"noaa_outcome_matches_result": 0.99}
     assert inference.load_evidence("CHI")["data_quality"] == {"noaa_outcome_matches_result": 1.0}
@@ -186,7 +204,7 @@ def test_explorer_defaults_to_new_york_and_switches_to_chicago(built, monkeypatc
     at.run()
     assert not at.exception
     assert _box(at, "City").value == "NY"
-    assert any("Central Park" in c.value for c in at.caption)
+    assert _box(at, "City").options == ["Chicago (Midway)", "New York (Central Park)"]
     labels = {m.label for m in at.metric}
     assert {shared.MODEL_LABELS[m] for m in inference.ALL_MODELS} <= labels
     assert shared.FAMILY_LABELS["extended_weather"] in [s.value for s in at.subheader]
@@ -194,7 +212,6 @@ def test_explorer_defaults_to_new_york_and_switches_to_chicago(built, monkeypatc
 
     _box(at, "City").set_value("CHI").run()
     assert not at.exception
-    assert any("Midway" in c.value for c in at.caption)
     assert at.session_state["selection"]["city"] == "CHI"
 
 

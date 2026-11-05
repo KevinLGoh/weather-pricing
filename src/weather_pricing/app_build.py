@@ -126,4 +126,6 @@ def build_artifacts(
         "splits": splits,
         "settings": {"test_frac": test_frac, "n_boot": n_boot, "rate": rate, "wang_lambda": 0.0},
     }
-    return artifacts.save_cities(out_dir, fitted, shown, predictions, city_results, {**sources, LADDER_NAME: ladder_path}, info)
+    # Kept locally for inspection: results/ is not tracked, and the app never reads them.
+    artifacts.save_models(results_root / "app" / "models.pkl", fitted)
+    return artifacts.save_cities(out_dir, shown, predictions, city_results, {**sources, LADDER_NAME: ladder_path}, info)
