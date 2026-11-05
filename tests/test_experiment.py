@@ -75,6 +75,24 @@ def _run_cli(tmp_path, monkeypatch, *extra):
     return frame
 
 
+def test_cli_stops_when_it_runs_from_an_installed_copy(tmp_path, monkeypatch, capsys):
+    """A non-editable install puts ROOT inside the environment, away from data/ and results/."""
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli, "RESULTS_DIR", tmp_path / "results")
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["evaluate"])
+    assert stopped.value.code == 2
+    assert "pip install -e . --no-deps" in capsys.readouterr().err
+    assert not (tmp_path / "results").exists()
+
+
+def test_build_rejects_an_unknown_city(capsys):
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["build", "--cities", "NY", "XX"])
+    assert stopped.value.code == 2
+    assert "invalid choice: 'XX'" in capsys.readouterr().err
+
+
 def test_evaluate_with_save_artifacts_writes_app_artifacts(tmp_path, monkeypatch):
     frame = _run_cli(tmp_path, monkeypatch, "--save-artifacts")
     out = tmp_path / "app_artifacts"

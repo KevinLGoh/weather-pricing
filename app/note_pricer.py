@@ -52,7 +52,7 @@ with shared.guarded():
         )
     contract = result["contract"]
     st.markdown(
-        f"Contract: {selection['city']}, {selection['date']}, {selection['snapshot']}, {contract['label']}."
+        f"Contract: {shared.city_label(selection['city'])}, {selection['date']}, {selection['snapshot']}, {contract['label']}."
     )
 
     # "\$": Streamlit Markdown (also in widget labels) reads a $...$ pair as inline math.
@@ -62,8 +62,10 @@ with shared.guarded():
     lam = st.slider("Risk loading λ", min_value=-1.0, max_value=1.0, value=0.0, step=0.05)
     st.caption(LAMBDA_CAPTION)
     models = list(result["probabilities"])
+    # The strongest weather model available is the fair comparison for the market.
+    default_baseline = "X_xgb" if "X_xgb" in models else "A_xgb"
     baseline_label = st.selectbox(
-        "Baseline model", [shared.MODEL_LABELS[m] for m in models], index=models.index("A_xgb")
+        "Baseline model", [shared.MODEL_LABELS[m] for m in models], index=models.index(default_baseline)
     )
     baseline = models[[shared.MODEL_LABELS[m] for m in models].index(baseline_label)]
 
@@ -77,26 +79,21 @@ with shared.guarded():
         baseline=baseline,
     )
     labels = [shared.MODEL_LABELS[m] for m in prices["model"]]
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
+                # The values first: on a narrow screen the columns past the edge need scrolling.
                 "Model": labels,
-                "Family": [shared.FAMILY_LABELS[f] for f in prices["family"]],
-                "Probability": [f"{p:.1%}" for p in prices["probability"]],
-                "Pricing probability": [f"{p:.1%}" for p in prices["pricing_probability"]],
                 "Value": [money(v) for v in prices["value"]],
                 "Change vs baseline": [signed_money(c) for c in prices["change_vs_baseline"]],
+                "Probability": [f"{p:.1%}" for p in prices["probability"]],
+                "Pricing probability": [f"{p:.1%}" for p in prices["pricing_probability"]],
+                "Family": [shared.FAMILY_LABELS[f] for f in prices["family"]],
             }
-        ),
-        hide_index=True,
+        )
     )
-    st.bar_chart(
-        pd.DataFrame({"Model": labels, "Change vs baseline ($)": list(prices["change_vs_baseline"])}),
-        x="Model",
-        y="Change vs baseline ($)",
-        horizontal=True,
-        sort=False,
-    )
-    if baseline != "C_xgb":
-        change = float(prices.set_index("model")["change_vs_baseline"]["C_xgb"])
-        st.markdown(shared.comparison_sentence(change, baseline_label))
+    shared.bar_chart(labels, list(prices["change_vs_baseline"]), "Change vs baseline ($)")
+    headline, headline_label = ("CX_xgb", "the extended weather + market model") if "CX_xgb" in models else ("C_xgb", "the combined XGBoost model")
+    if baseline != headline:
+        change = float(prices.set_index("model")["change_vs_baseline"][headline])
+        st.markdown(shared.comparison_sentence(change, baseline_label, headline_label))

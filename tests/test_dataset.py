@@ -256,6 +256,23 @@ def test_quality_report_measures_agreement_with_noaa_and_settlement():
     assert report["rule_text_mismatches"] == 0
 
 
+def test_quality_report_compares_temperature_set_only_on_a_later_contract():
+    df = _report_frame()
+    # Kalshi often fills the settled temperature on the winning bracket only.
+    df.loc[df["ticker"].isin(["A-LO", "B-LO"]), "settled_value"] = np.nan
+    diff = quality_report(df)["settled_minus_noaa_tmax"]
+    assert diff["n"] == 2
+    assert diff["share_equal"] == 0.5
+
+
+def test_quality_report_leaves_out_events_with_no_settled_temperature():
+    df = _report_frame()
+    df.loc[df["event_ticker"] == "B", "settled_value"] = np.nan
+    diff = quality_report(df)["settled_minus_noaa_tmax"]
+    assert diff["n"] == 1
+    assert diff["share_equal"] == 1.0
+
+
 def test_quality_report_counts_incomplete_bracket_rows():
     df = _report_frame()
     # A threshold ladder event is never a complete partition, but that is not a gap.

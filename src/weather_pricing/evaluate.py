@@ -97,6 +97,29 @@ def encompassing_test(y, p_weather, p_market, groups) -> pd.DataFrame:
     )
 
 
+def cross_fit_blend(y, p_weather, p_market, blocks, strata) -> np.ndarray:
+    """Out-of-sample blend of two probabilities: logit P(y) = a + b1 logit(p1) + b2 logit(p2).
+
+    Within each stratum (e.g. snapshot), every block (e.g. a run of consecutive dates) is
+    predicted from coefficients fitted on the other blocks. This shows whether a coefficient
+    found on the whole sample also lowers the score on rows it was not fitted to. Later
+    blocks do help fit earlier ones, but with three coefficients per stratum that matters
+    little, and the blend only ever sees the two probabilities.
+    """
+    y, blocks, strata = np.asarray(y, dtype=float), np.asarray(blocks), np.asarray(strata)
+    p1, p2 = (np.clip(np.asarray(p, dtype=float), 1e-4, 1 - 1e-4) for p in (p_weather, p_market))
+    X = np.column_stack([np.ones(len(y)), np.log(p1 / (1 - p1)), np.log(p2 / (1 - p2))])
+    out = np.full(len(y), np.nan)
+    codes, _ = _group_index(blocks)
+    for s in np.unique(strata):
+        for b in np.unique(blocks[strata == s]):
+            test = (strata == s) & (blocks == b)
+            fit = (strata == s) & (blocks != b)
+            beta, _ = _logit_cluster(X[fit], y[fit], codes[fit])
+            out[test] = 1 / (1 + np.exp(-X[test] @ beta))
+    return out
+
+
 def _logit_cluster(X: np.ndarray, y: np.ndarray, codes: np.ndarray, iters: int = 50) -> tuple[np.ndarray, np.ndarray]:
     """Unpenalised logistic MLE (Newton) with cluster-robust sandwich standard errors."""
     beta = np.zeros(X.shape[1])

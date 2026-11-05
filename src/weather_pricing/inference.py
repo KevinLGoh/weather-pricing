@@ -1,7 +1,7 @@
 """Inference layer for the app: contracts, model probabilities, note values, evidence.
 
 The UI calls only this module. Everything comes from app_artifacts/ (written by
-`evaluate --save-artifacts`); nothing is retrained and no API is called. The saved
+`app-artifacts`); nothing is retrained and no API is called. The saved
 out-of-sample predictions are used as they are, so models.pkl is never unpickled here.
 
 Every failure raises an InferenceError subclass whose message can be shown to the user
@@ -27,7 +27,7 @@ from . import valuation as val
 from .config import SNAPSHOTS
 from .experiment import APP_COLUMNS, MAIN
 
-BUILD_COMMAND = "python -m weather_pricing.cli evaluate --save-artifacts"
+BUILD_COMMAND = "python -m weather_pricing.cli app-artifacts --data snapshots snapshots_chi"
 
 # Snapshot labels as the dataset writes them, e.g. "D-1 14:00".
 SNAPSHOT_LABELS = [f"D-{days_before} {hour:02d}:00" for days_before, hour in SNAPSHOTS]
@@ -35,9 +35,12 @@ SNAPSHOT_LABELS = [f"D-{days_before} {hour:02d}:00" for days_before, hour in SNA
 FAMILIES = {
     "rule": ["R_gaussian_rule"],
     "weather": ["A_logit", "A_xgb"],
+    "stronger_weather": ["W_rule", "W_logit", "W_xgb"],
+    "extended_weather": ["X_logit", "X_xgb"],
     "market": ["B_market_mid", "B_market_norm", "B_logit"],
-    "combined": ["C_logit", "C_xgb"],
+    "combined": ["C_logit", "C_xgb", "CW_xgb", "CX_xgb"],
 }
+ALL_MODELS = [m for names in FAMILIES.values() for m in names]
 
 
 class InferenceError(Exception):
@@ -102,6 +105,7 @@ def _load(folder: str) -> dict:
 def clear_cache() -> None:
     _load.cache_clear()
     _load_evidence.cache_clear()
+    _load_finding.cache_clear()
 
 
 _artifacts_dir: Path | None = None  # set by the app; None means artifacts.ARTIFACTS_DIR
@@ -207,6 +211,7 @@ def predict(city: str, target_date, snapshot: str, ticker: str) -> dict:
         day = _parse_date(target_date).isoformat()
         raise DataNotFoundError(f"No contract {ticker!r} for {city} on {day} at {snapshot}.")
     r = match.iloc[0]
+    families = _families_present(r.index)
     return {
         "contract": {
             "ticker": r["ticker"],
@@ -221,8 +226,8 @@ def predict(city: str, target_date, snapshot: str, ticker: str) -> dict:
             "settle_source": r["settle_source"],
             "lead_hours": float(r["lead_hours"]),
         },
-        "probabilities": {name: float(r[name]) for name in MAIN},
-        "families": {family: list(names) for family, names in FAMILIES.items()},
+        "probabilities": {name: float(r[name]) for names in families.values() for name in names},
+        "families": families,
         "outcome": {"y": int(r["y"]), "settled_value": _num(r["settled_value"])},
     }
 
@@ -241,6 +246,12 @@ def _number(name: str, value, lo: float, hi: float, lo_open: bool = False) -> fl
 def _readable(x: float) -> str:
     """1e9 -> '1,000,000,000'; 0.5 -> '0.5' (never scientific notation for limits)."""
     return f"{x:,.0f}" if float(x).is_integer() else f"{x:,}"
+
+
+def _families_present(row) -> dict[str, list[str]]:
+    """FAMILIES without the models these artifacts lack, and without emptied families."""
+    present = {family: [m for m in names if m in row] for family, names in FAMILIES.items()}
+    return {family: names for family, names in present.items() if names}
 
 
 def _family_of(model: str) -> str | None:
@@ -266,7 +277,7 @@ def price_note(
     probs = {}
     for model, p in probabilities.items():
         if _family_of(model) is None:
-            raise InvalidInputError(f"probabilities: unknown model {model!r}. Known: {', '.join(MAIN)}.")
+            raise InvalidInputError(f"probabilities: unknown model {model!r}. Known: {', '.join(ALL_MODELS)}.")
         probs[model] = _number(f"probabilities[{model}]", p, 0.0, 1.0)
     if baseline not in probs:
         raise InvalidInputError(f"baseline {baseline!r} is not among the models: {', '.join(probs)}.")
@@ -307,9 +318,18 @@ EVIDENCE_TABLES = {  # file -> index column (None: no index)
 EVIDENCE_JSON = ["valuation.json", "split.json"]
 
 
-@functools.lru_cache(maxsize=2)
-def _load_evidence(folder: str) -> dict:
-    path = Path(folder)
+OPTIONAL_TABLES = {"encompassing_extended": 0}  # name -> index column; older builds lack these
+
+
+def _evidence_scopes(path: Path) -> list[str]:
+    """Cities with their own evidence folder; empty for the single-run layout."""
+    folder = path / artifacts.EVIDENCE_DIR
+    return sorted(p.name for p in folder.iterdir() if p.is_dir()) if folder.is_dir() else []
+
+
+@functools.lru_cache(maxsize=8)
+def _load_evidence(folder: str, scope: str | None) -> dict:
+    path = Path(folder) if scope is None else Path(folder) / artifacts.EVIDENCE_DIR / scope
     out: dict = {}
     for name, index_col in EVIDENCE_TABLES.items():
         try:
@@ -321,6 +341,12 @@ def _load_evidence(folder: str) -> dict:
             out[name.removesuffix(".json")] = json.loads((path / name).read_text())
         except READ_ERRORS as e:
             raise _unreadable(name, path) from e
+    for name, index_col in OPTIONAL_TABLES.items():
+        table = path / f"{name}.csv"
+        try:
+            out[name] = pd.read_csv(table, index_col=index_col) if table.exists() else None
+        except READ_ERRORS as e:
+            raise _unreadable(table.name, path) from e
     dq = path / "data_quality.json"
     try:
         out["data_quality"] = json.loads(dq.read_text()) if dq.exists() else None
@@ -334,10 +360,54 @@ def load_manifest() -> dict:
     return copy.deepcopy(_artifacts()["manifest"])
 
 
-def load_evidence() -> dict:
+def list_evidence_cities() -> list[str]:
+    """Cities with their own results; empty when the artifacts hold one combined set."""
+    return _evidence_scopes(_artifacts()["folder"])
+
+
+def load_evidence(city: str | None = None) -> dict:
     """Scores, bootstrap CIs, encompassing test, calibration, robustness cuts,
-    valuation summary, split, manifest and data quality (None if not built)."""
+    valuation summary, split, manifest and data quality (None if not built).
+
+    With per-city results, `city` picks one (the first if None)."""
     loaded = _artifacts()
-    evidence = copy.deepcopy(_load_evidence(str(loaded["folder"])))
+    scopes = _evidence_scopes(loaded["folder"])
+    if city is not None and city not in scopes:
+        raise InvalidInputError(f"No separate results for {city!r}. Available: {', '.join(scopes) or 'none'}.")
+    scope = city if city is not None else (scopes[0] if scopes else None)
+    evidence = copy.deepcopy(_load_evidence(str(loaded["folder"]), scope))
     evidence["manifest"] = copy.deepcopy(loaded["manifest"])
     return evidence
+
+
+FINDING_TABLES = [
+    "ladder",
+    "rolling_comparisons",
+    "rolling_by_fold",
+    "rolling_by_maturity",
+    "rolling_by_liquidity",
+    "rolling_by_snapshot",
+    "rolling_encompassing",
+    "rolling_forward_blend",
+    "exact_comparisons",
+    "exact_by_snapshot",
+]
+
+
+@functools.lru_cache(maxsize=2)
+def _load_finding(folder: str) -> dict | None:
+    path = Path(folder) / artifacts.FINDING_DIR
+    if not path.is_dir():
+        return None
+    out = {}
+    for name in FINDING_TABLES:
+        try:
+            out[name] = pd.read_csv(path / f"{name}.csv")
+        except READ_ERRORS as e:
+            raise _unreadable(f"{name}.csv", path) from e
+    return out
+
+
+def load_finding() -> dict | None:
+    """The tables across cities, windows and weather models, or None if not built."""
+    return copy.deepcopy(_load_finding(str(_artifacts()["folder"])))

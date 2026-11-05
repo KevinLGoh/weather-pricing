@@ -9,7 +9,7 @@ import streamlit as st
 
 import shared
 
-st.set_page_config(page_title="Weather note pricing (research)", layout="centered")
+st.set_page_config(page_title="Weather note pricing (research)", layout="wide")
 shared.init()
 st.sidebar.warning(shared.NOTICE)
 

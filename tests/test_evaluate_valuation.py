@@ -63,3 +63,31 @@ def test_horizon_years_adds_the_settlement_delay():
     assert val.horizon_years(16.0) == pytest.approx(24 / year_hours)
     hours = np.array([24.0, 42.0])
     assert np.allclose(val.horizon_years(np.array([16.0, 34.0])), hours / year_hours)
+
+
+def _blend_inputs(weather_noise, seed=4, n=6000):
+    rng = np.random.default_rng(seed)
+    x, m = rng.normal(size=n), rng.normal(size=n)
+    # With a noise input the outcome depends on the market signal alone, so the market is
+    # already calibrated and a blend has nothing to add.
+    truth = m if weather_noise else x + m
+    y = (rng.random(n) < 1 / (1 + np.exp(-truth))).astype(int)
+    p_market = 1 / (1 + np.exp(-m))
+    return y, 1 / (1 + np.exp(-x)), p_market, np.arange(n) * 5 // n, np.arange(n) % 2
+
+
+def test_blend_gains_out_of_sample_only_when_the_extra_input_is_informative():
+    y, p_w, p_m, blocks, strata = _blend_inputs(weather_noise=False)
+    assert ev.brier(y, ev.cross_fit_blend(y, p_w, p_m, blocks, strata)) < ev.brier(y, p_m) - 0.01
+
+    y, p_w, p_m, blocks, strata = _blend_inputs(weather_noise=True)
+    assert ev.brier(y, ev.cross_fit_blend(y, p_w, p_m, blocks, strata)) > ev.brier(y, p_m) - 0.001
+
+
+def test_blend_does_not_use_a_row_to_predict_itself():
+    y, p_w, p_m, blocks, strata = _blend_inputs(weather_noise=False, n=2000)
+    base = ev.cross_fit_blend(y, p_w, p_m, blocks, strata)
+    changed = y.copy()
+    held_out = (blocks == 2) & (strata == 0)
+    changed[held_out] = 1 - changed[held_out]
+    assert np.array_equal(ev.cross_fit_blend(changed, p_w, p_m, blocks, strata)[held_out], base[held_out])

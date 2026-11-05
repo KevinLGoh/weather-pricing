@@ -241,7 +241,7 @@ def test_predict_returns_all_models_families_and_outcome(tmp_path, monkeypatch):
 
 def test_missing_artifacts_folder_names_the_build_command(tmp_path, monkeypatch):
     _use(monkeypatch, tmp_path / "missing")
-    with pytest.raises(inference.ArtifactsMissingError, match="evaluate --save-artifacts"):
+    with pytest.raises(inference.ArtifactsMissingError, match="app-artifacts"):
         inference.list_cities()
     assert issubclass(inference.ArtifactsMissingError, inference.InferenceError)
 
@@ -282,7 +282,7 @@ def _assert_readable(error, folder, file_name):
     message = str(error).replace(str(folder), "<folder>")
     if error.__cause__ is not None:
         assert str(error.__cause__).replace(str(folder), "<folder>") not in message, message
-    assert "evaluate --save-artifacts" in message, message
+    assert "app-artifacts" in message, message
     assert file_name in message, message
     assert "damaged" in message, message
     for word in RAW_ERROR_WORDS:
@@ -440,7 +440,7 @@ def test_price_note_without_rate_in_manifest_raises_artifacts_missing(tmp_path, 
         inference.clear_cache()
         with pytest.raises(inference.ArtifactsMissingError) as info:
             inference.price_note(**inputs)
-        assert "evaluate --save-artifacts" in str(info.value), settings
+        assert "app-artifacts" in str(info.value), settings
 
 
 def test_price_note_rejects_unknown_model_and_bools(tmp_path, monkeypatch):
@@ -518,7 +518,7 @@ def test_load_evidence_missing_scores_raises_artifacts_missing(tmp_path, monkeyp
     with pytest.raises(inference.ArtifactsMissingError) as info:
         inference.load_evidence()
     assert "scores.csv" in str(info.value)
-    assert "evaluate --save-artifacts" in str(info.value)
+    assert "app-artifacts" in str(info.value)
 
 
 def test_load_manifest_returns_a_copy_of_the_manifest(tmp_path, monkeypatch):

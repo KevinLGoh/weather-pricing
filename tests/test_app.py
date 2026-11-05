@@ -355,11 +355,11 @@ def _expected_prices(principal=1000.0, loss_fraction=0.5, coupon=0.0, lam=0.0, b
 def _expected_table(shared, prices):
     return {
         "Model": [shared.MODEL_LABELS[m] for m in prices["model"]],
-        "Family": [shared.FAMILY_LABELS[f] for f in prices["family"]],
-        "Probability": [f"{p:.1%}" for p in prices["probability"]],
-        "Pricing probability": [f"{p:.1%}" for p in prices["pricing_probability"]],
         "Value": [f"${v:,.2f}" for v in prices["value"]],
         "Change vs baseline": [_change(c) for c in prices["change_vs_baseline"]],
+        "Probability": [f"{p:.1%}" for p in prices["probability"]],
+        "Pricing probability": [f"{p:.1%}" for p in prices["pricing_probability"]],
+        "Family": [shared.FAMILY_LABELS[f] for f in prices["family"]],
     }
 
 
@@ -396,7 +396,7 @@ def test_missing_artifacts_show_a_readable_error_with_the_build_command(tmp_path
     at = _app(tmp_path, monkeypatch, folder=tmp_path / "missing")
     at.run()
     assert not at.exception
-    assert any("evaluate --save-artifacts" in e.value for e in at.error)
+    assert any("app-artifacts" in e.value for e in at.error)
     text = "\n".join(_texts(at))
     for word in ["Weather data by Open-Meteo.com", "CC BY 4.0", "GHCN-Daily"]:
         assert word in text, word
@@ -419,7 +419,7 @@ def test_explorer_lists_dates_snapshots_and_contracts(tmp_path, monkeypatch):
     at = _app(tmp_path, monkeypatch)
     at.run()
     assert not at.exception
-    assert _selectbox(at, "City").options == ["NY"]
+    assert _selectbox(at, "City").options == ["New York (Central Park)"]
     assert [str(d) for d in _selectbox(at, "Date").options] == ["2026-01-03", "2026-01-02"]
     assert _selectbox(at, "Snapshot").options == ["D-1 14:00", "D-0 08:00"]
     labels = ["68°F or below", "69–70°F", "71–72°F", "73°F or above"]
@@ -436,7 +436,7 @@ def test_app_reads_artifacts_next_to_its_own_folder(tmp_path, monkeypatch):
     at.run()
     assert not at.exception
     assert not at.error
-    assert _selectbox(at, "City").options == ["NY"]
+    assert _selectbox(at, "City").options == ["New York (Central Park)"]
 
 
 def test_explorer_shows_all_eight_model_probabilities_by_family(tmp_path, monkeypatch):
@@ -447,8 +447,9 @@ def test_explorer_shows_all_eight_model_probabilities_by_family(tmp_path, monkey
     # Default choice: newest day, first snapshot, lowest bracket ("68°F or below" = T68).
     b = [suffix for *_, suffix in BRACKETS].index("T68")
     subheaders = [s.value for s in at.subheader]
-    for family in shared.FAMILY_LABELS.values():
-        assert family in subheaders, family
+    for family in ["rule", "weather", "market", "combined"]:  # the families these artifacts have
+        assert shared.FAMILY_LABELS[family] in subheaders, family
+    assert shared.FAMILY_LABELS["stronger_weather"] not in subheaders
     metrics = {m.label: m.value for m in at.metric}
     for m, model in enumerate(experiment.MAIN):
         assert metrics[shared.MODEL_LABELS[model]] == f"{_probability(m, b) * 100:.1f}%", model
@@ -667,7 +668,7 @@ def test_note_pricer_values_the_selected_contract_with_every_model(tmp_path, mon
     assert baseline.options == [shared.MODEL_LABELS[m] for m in experiment.MAIN]
     assert baseline.value == "Weather-only, XGBoost"
     # Summary line: city, date, snapshot and bracket of the selected contract.
-    assert any(all(w in t for w in ["NY", "2026-01-02", "D-0 08:00", "69–70°F"]) for t in _texts(at))
+    assert any(all(w in t for w in ["New York", "2026-01-02", "D-0 08:00", "69–70°F"]) for t in _texts(at))
     prices = _expected_prices()
     expected = _expected_table(shared, prices)
     table = _table(at)
@@ -823,7 +824,7 @@ def test_evidence_shows_bootstrap_confidence_intervals(tmp_path, monkeypatch):
     shared = _shared(monkeypatch)
     assert not at.exception
     table = _evidence_table(at, "Question")
-    assert list(table) == ["Question", "Baseline", "Challenger", "Brier difference", "95% CI", "p-value", "City-days"]
+    assert list(table) == ["Question", "Brier difference", "95% CI", "p-value", "City-days", "Baseline", "Challenger"]
     assert table["Question"] == [row[2] for row in BOOTSTRAP]
     assert table["Baseline"] == [shared.MODEL_LABELS[row[0]] for row in BOOTSTRAP]
     assert table["Challenger"] == [shared.MODEL_LABELS[row[1]] for row in BOOTSTRAP]
@@ -839,6 +840,21 @@ def test_evidence_shows_bootstrap_confidence_intervals(tmp_path, monkeypatch):
     assert table["p-value"][2] == "0.197"
     assert table["Baseline"][2] == "Market mid, renormalised"
     assert table["Challenger"][2] == "Combined, logistic"
+
+
+def test_evidence_never_shows_a_negative_zero(tmp_path, monkeypatch):
+    """A difference too small for four decimals keeps its digits instead of showing "-0.0000"."""
+    folder = _write_artifacts(tmp_path / "app_artifacts")
+    boot = pd.read_csv(folder / "bootstrap.csv")
+    boot.loc[len(boot) - 1, ["diff", "ci_lo", "ci_hi"]] = [-0.00002, -0.00016, 0.00004]
+    boot.to_csv(folder / "bootstrap.csv", index=False)
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    at.run()
+    at.switch_page("model_evidence.py").run()
+    assert not at.exception
+    table = _evidence_table(at, "Question")
+    assert table["Brier difference"][-1] == "-0.00002"
+    assert table["95% CI"][-1] == "-0.0002 to 0.00004"
     terms = _evidence_table(at, "Term")
     assert terms == {
         "Term": ["Intercept", "Weather probability (logit)", "Market probability (logit)"],
@@ -891,7 +907,7 @@ def test_evidence_limits_conclusions_to_this_weather_baseline(tmp_path, monkeypa
 def test_evidence_missing_results_file_shows_a_readable_error(tmp_path, monkeypatch):
     at = _evidence(tmp_path, monkeypatch, skip=("bootstrap.csv",))
     assert not at.exception
-    assert any("bootstrap.csv" in e.value and "evaluate --save-artifacts" in e.value for e in at.error)
+    assert any("bootstrap.csv" in e.value and "app-artifacts" in e.value for e in at.error)
     text = "\n".join(_texts(at))
     for word in ATTRIBUTION_WORDS:
         assert word in text, word

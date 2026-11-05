@@ -15,7 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
-app = ["streamlit>=1.66.1"]
+app = ["streamlit>=1.66.1", "altair>=5"]
 
 [project.scripts]
 wp = "weather_pricing.cli:main"

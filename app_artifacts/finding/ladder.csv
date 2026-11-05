@@ -1,0 +1,6 @@
+test,sample,weather_model,lead,ci_lo,ci_hi
+Original,"New York, one split",Open-Meteo,0.03371474044774017,0.029051285984195784,0.03836746249553114
+Stronger baseline,"New York, one split",NWS guidance and live readings,0.01470814761325892,0.0114444567846192,0.018087240739419218
+Replication,"Chicago, one split",NWS guidance and live readings,0.017128087871055006,0.013887136622949171,0.0203161594837996
+Rolling origin,"Both cities, 5 windows",Plus NAM and three global models,0.01091176918276962,0.009290435948185124,0.012498643188838634
+Exact runs,"Both cities, from 2026-04","Plus individual HRRR, NBM and ECMWF runs",0.009200480293921828,0.005914257974392485,0.012369847085155228

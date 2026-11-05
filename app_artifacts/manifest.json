@@ -4,25 +4,52 @@
     "2026-11-02"
   ],
   "cities": [
+    "CHI",
     "NY"
   ],
-  "rows_in": 33473,
-  "rows_used": 32951,
-  "train": {
-    "rows": 23033,
-    "events": 965,
-    "dates": [
-      "2023-01-01",
-      "2025-09-14"
-    ]
-  },
-  "test": {
-    "rows": 9918,
-    "events": 414,
-    "dates": [
-      "2025-09-15",
-      "2026-11-02"
-    ]
+  "splits": {
+    "CHI": {
+      "rows_in": 33533,
+      "rows_used": 33010,
+      "train": {
+        "rows": 23092,
+        "events": 965,
+        "dates": [
+          "2023-01-01",
+          "2025-09-14"
+        ]
+      },
+      "test": {
+        "rows": 9918,
+        "events": 414,
+        "dates": [
+          "2025-09-15",
+          "2026-11-02"
+        ]
+      },
+      "test_base_rate": 0.16666666666666666
+    },
+    "NY": {
+      "rows_in": 33473,
+      "rows_used": 32951,
+      "train": {
+        "rows": 23033,
+        "events": 965,
+        "dates": [
+          "2023-01-01",
+          "2025-09-14"
+        ]
+      },
+      "test": {
+        "rows": 9918,
+        "events": 414,
+        "dates": [
+          "2025-09-15",
+          "2026-11-02"
+        ]
+      },
+      "test_base_rate": 0.16666666666666666
+    }
   },
   "settings": {
     "test_frac": 0.3,
@@ -30,11 +57,11 @@
     "rate": 0.04,
     "wang_lambda": 0.0
   },
-  "created_utc": "2026-11-03T20:42:01+00:00",
-  "git_commit": "ef7886a4e9aad26c2ff60eec337a0df927f5153e",
-  "src_tree": "483f8cce1008d290247d3c8feecfc6257a6b2e64",
+  "created_utc": "2026-11-05T03:01:12+00:00",
+  "git_commit": "5e81b5cdbe24d8f463163d13e66ce519df0d97b4",
+  "src_tree": "4d9ed678a9e76f8ca5d9c74b0bbdc2304fb12d4f",
   "git_dirty": false,
-  "python": "3.12.16",
+  "python": "3.12.7",
   "packages": {
     "numpy": "2.5.4",
     "pandas": "3.1.0",
@@ -43,27 +70,56 @@
     "xgboost": "3.4.1",
     "pyarrow": "26.0.1"
   },
-  "noaa_accessed": "2026-11-03",
-  "predictions_rows": 9918,
+  "noaa_accessed": "2026-11-04",
+  "predictions_rows": 19836,
   "models": [
     "A_logit",
     "A_xgb",
     "B_logit",
+    "B_market_mid",
+    "B_market_norm",
+    "CW_xgb",
+    "CX_xgb",
     "C_logit",
     "C_xgb",
-    "R_gaussian_rule"
+    "R_gaussian_rule",
+    "W_logit",
+    "W_rule",
+    "W_xgb",
+    "X_logit",
+    "X_xgb"
   ],
   "files": [
-    "bootstrap.csv",
-    "data_quality.json",
-    "encompassing.csv",
-    "models.pkl",
-    "predictions.parquet",
-    "reliability.csv",
-    "robustness.csv",
-    "scores.csv",
-    "split.json",
-    "summary.md",
-    "valuation.json"
+    "evidence/CHI/bootstrap.csv",
+    "evidence/CHI/data_quality.json",
+    "evidence/CHI/encompassing.csv",
+    "evidence/CHI/encompassing_extended.csv",
+    "evidence/CHI/reliability.csv",
+    "evidence/CHI/robustness.csv",
+    "evidence/CHI/scores.csv",
+    "evidence/CHI/split.json",
+    "evidence/CHI/summary.md",
+    "evidence/CHI/valuation.json",
+    "evidence/NY/bootstrap.csv",
+    "evidence/NY/data_quality.json",
+    "evidence/NY/encompassing.csv",
+    "evidence/NY/encompassing_extended.csv",
+    "evidence/NY/reliability.csv",
+    "evidence/NY/robustness.csv",
+    "evidence/NY/scores.csv",
+    "evidence/NY/split.json",
+    "evidence/NY/summary.md",
+    "evidence/NY/valuation.json",
+    "finding/exact_by_snapshot.csv",
+    "finding/exact_comparisons.csv",
+    "finding/ladder.csv",
+    "finding/rolling_by_fold.csv",
+    "finding/rolling_by_liquidity.csv",
+    "finding/rolling_by_maturity.csv",
+    "finding/rolling_by_snapshot.csv",
+    "finding/rolling_comparisons.csv",
+    "finding/rolling_encompassing.csv",
+    "finding/rolling_forward_blend.csv",
+    "predictions.parquet"
   ]
 }

@@ -1,7 +1,0 @@
-baseline,challenger,question,diff,ci_lo,ci_hi,p_value,n_events
-A_logit,C_logit,Market data added to weather (logistic),0.039151169292399327,0.034288193897549744,0.044145529673264725,0.0,414
-A_xgb,C_xgb,Market data added to weather (XGBoost),0.03276609614502944,0.02804221256339802,0.03739205979419959,0.0,414
-B_market_norm,C_logit,Weather data added to market (logistic),-0.0013063070203059718,-0.0021230836508662368,-0.00048213971820471155,0.0,414
-B_market_norm,C_xgb,Weather data added to market (XGBoost),-0.0009382172651262038,-0.0023654861180969627,0.0005336795868762906,0.197,414
-A_xgb,B_market_norm,Market alone vs best weather-only,0.033704313410155645,0.02905861285851145,0.038377664728425284,0.0,414
-B_market_mid,B_market_norm,Renormalising quotes within an event,-4.8058846906590125e-05,-0.00020335809037874374,0.00011207902960938367,0.562,414

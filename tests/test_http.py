@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import requests
 
 from weather_pricing import http
 
@@ -80,3 +81,32 @@ def test_cache_file_without_an_object_is_refetched(monkeypatch, tmp_path):
     cached = json.loads(path.read_text())
     assert isinstance(cached, dict)
     assert cached["body"] == BODY
+
+
+def test_exhausted_retries_report_the_last_http_status(monkeypatch, tmp_path):
+    calls = fake_get(monkeypatch, tmp_path)
+    monkeypatch.setattr(http.time, "sleep", lambda _: None)
+
+    def unavailable(url, params=None, timeout=None):
+        calls.append((url, params))
+        response = FakeResponse(BODY)
+        response.status_code = 503
+        return response
+
+    monkeypatch.setattr(http._session, "get", unavailable)
+    with pytest.raises(RuntimeError, match=r"after 3 attempts \(last error: HTTP 503\)"):
+        http.get_json(URL, PARAMS, namespace="unavailable", min_interval=0, retries=3)
+    assert len(calls) == 3
+    assert not http._cache_path("unavailable", URL, PARAMS).exists()
+
+
+def test_exhausted_retries_report_the_last_connection_error(monkeypatch, tmp_path):
+    fake_get(monkeypatch, tmp_path)
+    monkeypatch.setattr(http.time, "sleep", lambda _: None)
+
+    def timed_out(url, params=None, timeout=None):
+        raise requests.exceptions.ReadTimeout("read timed out")
+
+    monkeypatch.setattr(http._session, "get", timed_out)
+    with pytest.raises(RuntimeError, match=r"last error: ReadTimeout"):
+        http.get_json(URL, PARAMS, namespace="timed-out", min_interval=0, retries=2)
