@@ -16,7 +16,7 @@ from datetime import date
 
 import pandas as pd
 
-from .config import DEFAULT_CITIES, PROCESSED_DIR, RESULTS_DIR
+from .config import CITIES, DEFAULT_CITIES, PROCESSED_DIR, RESULTS_DIR, ROOT
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     b = sub.add_parser("build", help="collect data and build point-in-time snapshots")
-    b.add_argument("--cities", nargs="+", default=DEFAULT_CITIES)
+    b.add_argument("--cities", nargs="+", default=DEFAULT_CITIES, choices=sorted(CITIES), metavar="CITY", help=f"one or more of {', '.join(sorted(CITIES))}")
     b.add_argument("--start", type=date.fromisoformat, default=date(2025, 1, 1))
     b.add_argument("--end", type=date.fromisoformat, default=None)
     b.add_argument("--name", default="snapshots", help="file name under data/processed, so another city can sit beside the main dataset")
@@ -57,6 +57,13 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--rate", type=float, default=0.04, help="annual risk-free rate (continuous)")
 
     args = p.parse_args(argv)
+    # data/, results/ and app_artifacts/ sit beside src/. A copy of the package in
+    # site-packages (a non-editable install) would read and write inside the environment.
+    if not (ROOT / "pyproject.toml").is_file():
+        p.error(
+            f"weather_pricing runs from an installed copy ({ROOT}), so it cannot find the repo's data/ and "
+            "results/ folders. From the repo root, run: pip install -e . --no-deps"
+        )
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     if args.cmd == "build":
