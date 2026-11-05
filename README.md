@@ -132,11 +132,12 @@ exact-run results, so run the commands under "Strengthening the main finding" fi
 python -m weather_pricing.cli app-artifacts --data snapshots snapshots_chi
 ```
 
-This writes `app_artifacts/` (about 7 MB): `models.pkl`, `predictions.parquet`,
-`evidence/<city>/` with each city's results, `finding/` with the tables across cities and
-`manifest.json`. Each city has its own fits on its own chronological split. The app reads
-only this folder. `evaluate --save-artifacts` still builds the older single-run layout, which
-the app can also read, and it replaces these files.
+This writes `app_artifacts/` (about 3 MB): `predictions.parquet`, `evidence/<city>/` with
+each city's results, `finding/` with the tables across cities and `manifest.json`. Each
+city has its own fits on its own chronological split. The app reads only this folder. The
+fitted models go to `results/app/models.pkl`, which git ignores, because the app never
+reads them and this command reproduces them. `evaluate --save-artifacts` still builds the
+older single-run layout, which the app can also read, and it replaces these files.
 
 **3. Run the app.**
 
@@ -166,7 +167,9 @@ lower than the baseline. With λ = 0.25 the three values are \$807.00, \$709.98 
 
 **Screenshots** (in `docs/screenshots/`). These predate Chicago and the stronger weather
 models, so they show New York with Models A, B and C only, and their figures differ from
-the worked example above. The text above has the current values.
+the worked example above. The text above has the current values. To retake all six, start
+the app on port 8599 and run `python scripts/take_screenshots.py` (it needs `pip install
+playwright` and Google Chrome). Then remove this note.
 
 - Contract Explorer with the worked-example contract: selectors, quote, probabilities by
   family, outcome.
@@ -603,7 +606,7 @@ the other 4, so later data helps earlier blocks, which can only favour the weath
 | Comparison, both cities | Brier difference (95% CI) |
 |---|---|
 | Runs added to weather | 0.0069 (0.0047 to 0.0092) |
-| Market vs weather, without the runs | 0.0160 (0.0124 to 0.0194) |
+| Market vs weather, without the runs | 0.0161 (0.0124 to 0.0194) |
 | Market vs weather, with the runs | 0.0092 (0.0059 to 0.0124) |
 | Weather with the runs added to market | +0.0004 (−0.0005 to 0.0014) |
 
@@ -690,6 +693,7 @@ Pinned in `requirements.txt` (the versions the app artifacts were built with):
 | scipy | 1.18.1 | normal distribution, logit, statistics |
 | xgboost | 3.4.1 | the boosted-tree models |
 | streamlit | 1.66.1 | the app (optional `app` extra in `pyproject.toml`) |
+| altair | 6.3.0 | the app's charts (optional `app` extra) |
 
 `requirements-dev.txt` adds pytest 9.2.0 for the test suite. Everything else is the
 Python standard library.
@@ -756,6 +760,7 @@ src/weather_pricing/
 app/                 Streamlit app: streamlit_app.py, the three pages, shared.py
 app_artifacts/       what the app loads (built by app-artifacts)
 docs/screenshots/    README screenshots
+scripts/             take_screenshots.py, retakes the README screenshots
 tests/               offline tests (synthetic data, no network)
 requirements*.txt    pinned versions for the app and the tests
 ```
