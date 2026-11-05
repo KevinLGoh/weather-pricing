@@ -57,9 +57,9 @@
     "rate": 0.04,
     "wang_lambda": 0.0
   },
-  "created_utc": "2026-11-05T00:19:34+00:00",
-  "git_commit": "ab14d20e4065814732d73d122463d89c74010cee",
-  "src_tree": "41f42c9d7b7521c7e4570217bd238aac87710e8e",
+  "created_utc": "2026-11-05T03:01:12+00:00",
+  "git_commit": "5e81b5cdbe24d8f463163d13e66ce519df0d97b4",
+  "src_tree": "4d9ed678a9e76f8ca5d9c74b0bbdc2304fb12d4f",
   "git_dirty": false,
   "python": "3.12.7",
   "packages": {
@@ -120,7 +120,6 @@
     "finding/rolling_comparisons.csv",
     "finding/rolling_encompassing.csv",
     "finding/rolling_forward_blend.csv",
-    "models.pkl",
     "predictions.parquet"
   ]
 }
