@@ -396,7 +396,7 @@ def test_missing_artifacts_show_a_readable_error_with_the_build_command(tmp_path
     at = _app(tmp_path, monkeypatch, folder=tmp_path / "missing")
     at.run()
     assert not at.exception
-    assert any("evaluate --save-artifacts" in e.value for e in at.error)
+    assert any("app-artifacts" in e.value for e in at.error)
     text = "\n".join(_texts(at))
     for word in ["Weather data by Open-Meteo.com", "CC BY 4.0", "GHCN-Daily"]:
         assert word in text, word
@@ -447,8 +447,9 @@ def test_explorer_shows_all_eight_model_probabilities_by_family(tmp_path, monkey
     # Default choice: newest day, first snapshot, lowest bracket ("68°F or below" = T68).
     b = [suffix for *_, suffix in BRACKETS].index("T68")
     subheaders = [s.value for s in at.subheader]
-    for family in shared.FAMILY_LABELS.values():
-        assert family in subheaders, family
+    for family in ["rule", "weather", "market", "combined"]:  # the families these artifacts have
+        assert shared.FAMILY_LABELS[family] in subheaders, family
+    assert shared.FAMILY_LABELS["stronger_weather"] not in subheaders
     metrics = {m.label: m.value for m in at.metric}
     for m, model in enumerate(experiment.MAIN):
         assert metrics[shared.MODEL_LABELS[model]] == f"{_probability(m, b) * 100:.1f}%", model
@@ -891,7 +892,7 @@ def test_evidence_limits_conclusions_to_this_weather_baseline(tmp_path, monkeypa
 def test_evidence_missing_results_file_shows_a_readable_error(tmp_path, monkeypatch):
     at = _evidence(tmp_path, monkeypatch, skip=("bootstrap.csv",))
     assert not at.exception
-    assert any("bootstrap.csv" in e.value and "evaluate --save-artifacts" in e.value for e in at.error)
+    assert any("bootstrap.csv" in e.value and "app-artifacts" in e.value for e in at.error)
     text = "\n".join(_texts(at))
     for word in ATTRIBUTION_WORDS:
         assert word in text, word

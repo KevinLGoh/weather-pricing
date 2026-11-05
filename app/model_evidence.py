@@ -15,6 +15,33 @@ CONCLUSION = (
     "ensembles, NBM guidance and live station observations that this baseline does not have."
 )
 
+FINDING_CONCLUSION = (
+    "What this supports: in liquid Kalshi daily-high markets for New York and Chicago, prices beat every "
+    "public-archive weather model we could build, and those models add almost nothing to prices out of "
+    "sample. This does not show that markets beat a live forecaster with hourly data, which the archives "
+    "do not offer, and it says nothing about other weather events or longer horizons."
+)
+
+# Replace the single-run limitations about the weather baseline, the split and the city.
+FINDING_LIMITATIONS = [
+    "Guidance age: the stronger models use guidance usually 2–10 h old. Individual runs exist only from "
+    "April 2026 and are 3- to 6-hourly, and full ensembles are not archived, so part of the market's lead may "
+    "still be a data gap, especially on the target day.",
+    "Release delays are assumptions, not archived publication times. Doubling the first set of guidance "
+    "delays did not change the conclusions.",
+    "Short horizons: these markets cover 34 h or less, so the results say nothing about weather risk "
+    "over many days or seasons.",
+    "Two cities, which share weather on some days. The per-city scores below use one chronological "
+    "train/test split, and the rolling-origin tables use 5 windows.",
+    "Stale quotes: in illiquid hours the last hourly quote carries over. Such rows are flagged stale and "
+    "analysed separately.",
+    "Strike placement: Kalshi sets its brackets near its expected temperature, so even the weather-only "
+    "models see a small market signal in the contract terms.",
+    "Settled temperatures before 2025: Kalshi mostly omits them, so NOAA values fill the gap, only for "
+    "the rule-based error model. Outcomes always come from Kalshi.",
+    "The note is hypothetical, not a traded security, and the risk loading λ is illustrative.",
+]
+
 LIMITATIONS = [
     "Forecast age: the weather models only use forecast runs started at least a day before the hour "
     "they forecast, so at the snapshot the forecast is often 7–23 h old, and it is the same at "
@@ -36,12 +63,14 @@ LIMITATIONS = [
 
 BRIER_COLUMNS = {
     "A_xgb": "Weather-only, XGBoost",
+    "W_xgb": "Stronger weather, XGBoost",
+    "X_xgb": "Extended weather, XGBoost",
     "B_market_norm": "Market mid, renormalised",
     "C_logit": "Combined, logistic",
     "C_xgb": "Combined, XGBoost",
     "A_minus_C_xgb": "Gain from adding the market (XGBoost)",
 }
-CALIBRATION_MODELS = ["A_xgb", "B_market_norm", "C_xgb"]
+CALIBRATION_MODELS = ["A_xgb", "W_xgb", "X_xgb", "B_market_norm", "C_xgb"]
 # Liquidity buckets as experiment.run labels them, tightest spread first.
 LIQUIDITY_ORDER = ["spread<=2c", "2-5c", ">5c", "stale/no quote"]
 LIQUIDITY_LABELS = {
@@ -77,16 +106,198 @@ def p_text(p: float) -> str:
     return "< 0.001" if p < 0.001 else f"{p:.3f}"
 
 
+def p_with_equals(p: float) -> str:
+    """For use after the letter p in a sentence: 'p < 0.001' or 'p = 0.154'."""
+    return p_text(p) if p < 0.001 else f"= {p_text(p)}"
+
+
 def brier_table(rows: pd.DataFrame, first: str, first_column: str) -> pd.DataFrame:
     """Brier scores of one robustness cut, as display strings."""
     table = {first_column: list(rows[first]), "City-days": [int(n) for n in rows["events"]]}
     for column, label in BRIER_COLUMNS.items():
-        table[label] = [f"{x:.4f}" for x in rows[column]]
+        if column in rows:  # stronger weather models are only in the multi-city build
+            table[label] = [f"{x:.4f}" for x in rows[column]]
     return pd.DataFrame(table)
 
 
+def interval(lo: float, hi: float, digits: int = 3) -> str:
+    return f"{lo:.{digits}f} to {hi:.{digits}f}"
+
+
+def show_finding(finding: dict) -> None:
+    """Across cities, windows and weather models: does the market's lead survive?"""
+    st.subheader("Does the market's lead survive better tests?")
+    st.markdown(
+        "Each row gives the market's lead over the best weather model at that stage: the weather model's "
+        "Brier score minus the market's. Positive means the market is better. The samples differ, so the rows "
+        "are not strictly comparable."
+    )
+    ladder = finding["ladder"]
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "Test": ladder["test"],
+                "Sample": ladder["sample"],
+                "Weather model": ladder["weather_model"],
+                "Market lead": [f"{x:.3f}" for x in ladder["lead"]],
+                "95% CI": [interval(lo, hi) for lo, hi in zip(ladder["ci_lo"], ladder["ci_hi"])],
+            }
+        ),
+        hide_index=True,
+    )
+    st.info(FINDING_CONCLUSION)
+
+    st.subheader("Rolling-origin evaluation")
+    st.markdown(
+        "Each city refits on all earlier days and is scored on the next 6-month window, so a result has to hold "
+        "across seasons and as the market matures. Pooled intervals resample whole dates, because two cities on "
+        "one date are not independent."
+    )
+    compared = finding["rolling_comparisons"]
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "Sample": [shared.city_label(c) for c in compared["city"]],
+                "Question": compared["question"],
+                "Brier difference": [f"{x:.4f}" for x in compared["diff"]],
+                "95% CI": [interval(lo, hi, 4) for lo, hi in zip(compared["ci_lo"], compared["ci_hi"])],
+                "p-value": [p_text(p) for p in compared["p_value"]],
+            }
+        ),
+        hide_index=True,
+    )
+
+    st.markdown("**The market's lead by window**")
+    folds = finding["rolling_by_fold"]
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "City": [shared.city_label(c) for c in folds["city"]],
+                "From": folds["from"],
+                "To": folds["to"],
+                "City-days": [int(n) for n in folds["city_days"]],
+                "Extended weather": [f"{x:.4f}" for x in folds["X_xgb"]],
+                "Market": [f"{x:.4f}" for x in folds["B_market_norm"]],
+                "Market lead": [f"{x:.4f}" for x in folds["market_lead"]],
+                "95% CI": [interval(lo, hi, 4) for lo, hi in zip(folds["lead_lo"], folds["lead_hi"])],
+            }
+        ),
+        hide_index=True,
+    )
+
+    st.markdown("**As the market matured** (both cities)")
+    st.markdown(
+        "Over time spreads narrowed, the market's lead grew and the weather model's extra information fell. "
+        "This is five windows of different seasons, so it is suggestive and not proof of cause."
+    )
+    maturity = finding["rolling_by_maturity"]
+    enc = finding["rolling_encompassing"]
+    by_fold = enc[(enc["city"] == "ALL") & (enc["fold"] != "all")].assign(fold=lambda d: d["fold"].astype(int)).set_index("fold")
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "Window from": maturity["from"],
+                "Median spread": [f"{x * 100:.0f}¢" for x in maturity["median_spread"]],
+                "Stale rows": [f"{x:.0%}" for x in maturity["stale_share"]],
+                "Market lead": [f"{x:.3f}" for x in maturity["market_lead"]],
+                "Weather coefficient": [f"{by_fold.loc[k, 'b_weather']:.2f}" for k in maturity["fold"]],
+                "Weather p-value": [p_text(by_fold.loc[k, "p_weather"]) for k in maturity["fold"]],
+                "Market coefficient": [f"{by_fold.loc[k, 'b_market']:.2f}" for k in maturity["fold"]],
+            }
+        ),
+        hide_index=True,
+    )
+
+    blend = finding["rolling_forward_blend"].set_index("city").loc["ALL"]
+    overall = enc[(enc["city"] == "ALL") & (enc["fold"] == "all")].iloc[0]
+    st.markdown(
+        f"Across all windows the weather coefficient is {overall['b_weather']:.2f} (SE {overall['se_weather']:.2f}), "
+        "so the market does not contain all of the forecast. That information is worth little: a blend fitted only "
+        f"on earlier windows changes the Brier score by {blend['diff']:+.4f} "
+        f"(95% CI {interval(blend['ci_lo'], blend['ci_hi'], 4)}, p {p_with_equals(blend['p_value'])})."
+    )
+
+    with st.expander("By snapshot and liquidity"):
+        order = {label: i for i, label in enumerate(inference.SNAPSHOT_LABELS)}
+        snapshots = finding["rolling_by_snapshot"].sort_values(
+            ["city", "snapshot"], key=lambda s: s.map(order) if s.name == "snapshot" else s, kind="stable"
+        )
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "City": [shared.city_label(c) for c in snapshots["city"]],
+                    "Snapshot": snapshots["snapshot"],
+                    "Extended weather": [f"{x:.4f}" for x in snapshots["X_xgb"]],
+                    "Market": [f"{x:.4f}" for x in snapshots["B_market_norm"]],
+                    "Market lead": [f"{x:.4f}" for x in snapshots["market_lead"]],
+                    "95% CI": [interval(lo, hi, 4) for lo, hi in zip(snapshots["lead_lo"], snapshots["lead_hi"])],
+                }
+            ),
+            hide_index=True,
+        )
+        liquidity = finding["rolling_by_liquidity"]
+        rank = {label: i for i, label in enumerate(LIQUIDITY_ORDER)}
+        liquidity = liquidity.sort_values("liquidity", key=lambda s: s.map(rank).fillna(len(rank)), kind="stable")
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "Liquidity": [LIQUIDITY_LABELS.get(b, b) for b in liquidity["liquidity"]],
+                    "Market lead": [f"{x:.4f}" for x in liquidity["market_lead"]],
+                    "95% CI": [interval(lo, hi, 4) for lo, hi in zip(liquidity["lead_lo"], liquidity["lead_hi"])],
+                    "Weather added to market": [f"{x:+.4f}" for x in liquidity["added"]],
+                    "95% CI, added": [interval(lo, hi, 4) for lo, hi in zip(liquidity["added_lo"], liquidity["added_hi"])],
+                }
+            ),
+            hide_index=True,
+        )
+
+    st.subheader("Exact model runs")
+    st.markdown(
+        "Individual HRRR, NBM and ECMWF runs exist only from April 2026, so this test blends them into the "
+        "rolling-origin predictions instead of retraining. Each date block is fitted on the others, so later data "
+        "helps earlier blocks, which can only favour the weather model."
+    )
+    exact = finding["exact_comparisons"]
+    exact = exact[exact["city"] == "ALL"]
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "Question": exact["question"],
+                "Brier difference": [f"{x:.4f}" for x in exact["diff"]],
+                "95% CI": [interval(lo, hi, 4) for lo, hi in zip(exact["ci_lo"], exact["ci_hi"])],
+                "p-value": [p_text(p) for p in exact["p_value"]],
+                "Dates": [int(n) for n in exact["n_events"]],
+            }
+        ),
+        hide_index=True,
+    )
+    by_snapshot = finding["exact_by_snapshot"].set_index("snapshot")
+    by_snapshot = by_snapshot.reindex([s for s in inference.SNAPSHOT_LABELS if s in by_snapshot.index]).reset_index()
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "Snapshot": by_snapshot["snapshot"],
+                "Weather with the runs": [f"{x:.4f}" for x in by_snapshot["F_weather"]],
+                "Market": [f"{x:.4f}" for x in by_snapshot["B_market_norm"]],
+                "Market lead": [f"{x:.4f}" for x in by_snapshot["market_lead"]],
+                "95% CI": [interval(lo, hi, 4) for lo, hi in zip(by_snapshot["lead_lo"], by_snapshot["lead_hi"])],
+            }
+        ),
+        hide_index=True,
+    )
+
+
 with shared.guarded():
-    evidence = inference.load_evidence()
+    finding = inference.load_finding()
+    if finding is not None:
+        show_finding(finding)
+    cities = inference.list_evidence_cities()
+    if cities:
+        st.subheader("Results for one city")
+        city = st.selectbox("City", cities, index=cities.index("NY") if "NY" in cities else 0, format_func=shared.city_label)
+    else:
+        city = None
+    evidence = inference.load_evidence(city)
     split, manifest = evidence["split"], evidence["manifest"]
     test = split["test"]
     st.caption(
@@ -95,11 +306,13 @@ with shared.guarded():
     )
 
     st.subheader("Scores")
-    scores = evidence["scores"].reindex(MAIN)
+    # MAIN always, in the family order, and the stronger models when this build has them.
+    scored = [m for m in inference.ALL_MODELS if m in MAIN or m in evidence["scores"].index]
+    scores = evidence["scores"].reindex(scored)
     st.dataframe(
         pd.DataFrame(
             {
-                "Model": [shared.MODEL_LABELS[m] for m in MAIN],
+                "Model": [shared.MODEL_LABELS[m] for m in scored],
                 "Brier": [f"{x:.4f}" for x in scores["brier"]],
                 "Log loss": [f"{x:.3f}" for x in scores["log_loss"]],
                 "ECE": [f"{x:.3f}" for x in scores["ece"]],
@@ -156,7 +369,27 @@ with shared.guarded():
         hide_index=True,
     )
 
-    st.info(CONCLUSION)
+    extended = evidence["encompassing_extended"]
+    if extended is not None:
+        extended = extended.reindex(list(ENCOMPASSING_TERMS))
+        st.markdown(
+            f"The same regression with {shared.MODEL_LABELS['X_xgb']}, on this city's test period alone. The "
+            "rolling-origin table above covers much more data."
+        )
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "Term": list(ENCOMPASSING_TERMS.values()),
+                    "Coefficient": [f"{x:.2f}" for x in extended["coef"]],
+                    "SE": [f"{x:.2f}" for x in extended["se"]],
+                    "p-value": [p_text(p) for p in extended["p_value"]],
+                }
+            ),
+            hide_index=True,
+        )
+
+    if finding is None:
+        st.info(CONCLUSION)
 
     with st.expander("Where these results come from"):
         train = split["train"]
@@ -237,7 +470,7 @@ with shared.guarded():
             )
 
     st.subheader("Limitations")
-    st.markdown("\n".join(f"- {line}" for line in LIMITATIONS))
+    st.markdown("\n".join(f"- {line}" for line in (FINDING_LIMITATIONS if finding is not None else LIMITATIONS)))
 
     st.subheader("Data sources")
     st.markdown(shared.data_sources(manifest), unsafe_allow_html=True)

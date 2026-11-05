@@ -5,13 +5,18 @@ import streamlit as st
 
 import shared
 from weather_pricing import inference
-from weather_pricing.config import STALE_HOURS
+from weather_pricing.config import CITIES, STALE_HOURS
 
 LIMITATION = (
     "Known limitation: the weather models only use forecast runs started at least a day before "
     "the hour they forecast (and published about 6 h after they start), so at the snapshot the "
     "forecast is often 7–23 h old, and it is the same at D-0 08:00 and D-0 12:00. This likely "
     "overstates the market's advantage."
+)
+STRONGER_LIMITATION = (
+    "Weather-only models use Open-Meteo forecasts, which are often 7–23 h old at the snapshot. Stronger "
+    "weather adds NWS guidance, usually 2–10 h old, and the readings so far that day. Extended weather adds "
+    "NAM and three global models. None of them has hourly guidance, so a live forecaster could do better."
 )
 
 shared.page_header(
@@ -24,7 +29,11 @@ shared.page_header(
 )
 
 with shared.guarded():
-    city = st.selectbox("City", inference.list_cities())
+    cities = inference.list_cities()
+    # New York first: it is the longest-studied city and the README's worked example.
+    city = st.selectbox("City", cities, index=cities.index("NY") if "NY" in cities else 0)
+    if city in CITIES:
+        st.caption(f"Settles at {CITIES[city].name}.")
     dates = sorted(inference.list_dates(city), reverse=True)
     st.caption(f"Loaded {len(dates)} test days ({dates[-1]} to {dates[0]}) from the app artifacts.")
     day = st.selectbox("Date", dates, format_func=lambda d: d.isoformat())
@@ -85,7 +94,7 @@ with shared.guarded():
         horizontal=True,
         sort=False,  # keep the family order of the metrics above
     )
-    st.caption(LIMITATION)
+    st.caption(STRONGER_LIMITATION if "stronger_weather" in result["families"] else LIMITATION)
 
     outcome = result["outcome"]
     settled = "unknown" if outcome["settled_value"] is None else f"{outcome['settled_value']:.0f}°F"

@@ -62,8 +62,10 @@ with shared.guarded():
     lam = st.slider("Risk loading λ", min_value=-1.0, max_value=1.0, value=0.0, step=0.05)
     st.caption(LAMBDA_CAPTION)
     models = list(result["probabilities"])
+    # The strongest weather model available is the fair comparison for the market.
+    default_baseline = "X_xgb" if "X_xgb" in models else "A_xgb"
     baseline_label = st.selectbox(
-        "Baseline model", [shared.MODEL_LABELS[m] for m in models], index=models.index("A_xgb")
+        "Baseline model", [shared.MODEL_LABELS[m] for m in models], index=models.index(default_baseline)
     )
     baseline = models[[shared.MODEL_LABELS[m] for m in models].index(baseline_label)]
 
@@ -97,6 +99,7 @@ with shared.guarded():
         horizontal=True,
         sort=False,
     )
-    if baseline != "C_xgb":
-        change = float(prices.set_index("model")["change_vs_baseline"]["C_xgb"])
-        st.markdown(shared.comparison_sentence(change, baseline_label))
+    headline, headline_label = ("CX_xgb", "the extended weather + market model") if "CX_xgb" in models else ("C_xgb", "the combined XGBoost model")
+    if baseline != headline:
+        change = float(prices.set_index("model")["change_vs_baseline"][headline])
+        st.markdown(shared.comparison_sentence(change, baseline_label, headline_label))
