@@ -1,7 +1,7 @@
 """Does the market still add information against a stronger weather model?
 
-Uses exactly the rows and split of the main experiment, so W and CW can be compared with
-A, B and C directly. It writes to its own results folder and leaves the app's artifacts
+Applies the main experiment's sample rules and chronological split to whichever dataset it
+is given, so W and CW can be compared with A, B and C directly. It writes to its own results folder and leaves the app's artifacts
 alone.
 """
 
@@ -202,7 +202,7 @@ def _pays_below_floor(df: pd.DataFrame) -> int:
 def render(train, test, scores, boot, enc, by_snapshot, by_source, accuracy, audit, valuation) -> str:
     return f"""# Stronger weather baseline
 
-Same rows and split as the main experiment. Train: {train['event_id'].nunique()} city-days ({train['target_date'].min()} to {train['target_date'].max()}).
+Cities: {', '.join(sorted(train['city'].unique()))}. Sample rules and chronological split as in the main experiment, so these models compare directly with A, B and C. Train: {train['event_id'].nunique()} city-days ({train['target_date'].min()} to {train['target_date'].max()}).
 Test: {test['event_id'].nunique()} city-days ({test['target_date'].min()} to {test['target_date'].max()}), {len(test)} rows.
 
 ## Out-of-sample scores (lower is better)

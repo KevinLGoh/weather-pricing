@@ -89,5 +89,7 @@ def test_experiment_writes_its_own_results(tmp_path):
     df["settle_source"] = "NWS"
     md = weather_experiment.run(df, tmp_path / "w", n_boot=20)
     assert "Stronger weather baseline" in md
+    assert "Cities: NY." in md
+    assert "Same rows" not in md  # it must hold for any dataset, not just the main one
     for name in ["scores.csv", "bootstrap.csv", "encompassing.csv", "by_snapshot.csv", "forecast_accuracy.csv", "summary.md"]:
         assert (tmp_path / "w" / name).exists()
