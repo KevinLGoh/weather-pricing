@@ -824,7 +824,7 @@ def test_evidence_shows_bootstrap_confidence_intervals(tmp_path, monkeypatch):
     shared = _shared(monkeypatch)
     assert not at.exception
     table = _evidence_table(at, "Question")
-    assert list(table) == ["Question", "Baseline", "Challenger", "Brier difference", "95% CI", "p-value", "City-days"]
+    assert list(table) == ["Question", "Brier difference", "95% CI", "p-value", "City-days", "Baseline", "Challenger"]
     assert table["Question"] == [row[2] for row in BOOTSTRAP]
     assert table["Baseline"] == [shared.MODEL_LABELS[row[0]] for row in BOOTSTRAP]
     assert table["Challenger"] == [shared.MODEL_LABELS[row[1]] for row in BOOTSTRAP]

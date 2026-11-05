@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page, TimeoutError, sync_playwright
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8599"
 OUT = Path(__file__).resolve().parents[1] / "docs" / "screenshots"
@@ -30,8 +30,16 @@ def settle(page: Page) -> None:
 
 
 def choose(page: Page, label: str, option: str) -> None:
-    page.get_by_role("combobox", name=label, exact=True).click()
-    page.locator('[role="option"]', has_text=option).first.click()
+    box = page.get_by_role("combobox", name=label, exact=True)
+    choice = page.locator('[role="option"]', has_text=option).first
+    box.scroll_into_view_if_needed()
+    page.wait_for_timeout(500)  # a dropdown opened while the page still moves closes again
+    box.click()
+    try:
+        choice.wait_for(state="visible", timeout=5000)
+    except TimeoutError:
+        box.click()
+    choice.click()
     settle(page)
 
 
@@ -85,15 +93,12 @@ def main() -> None:
 
         page.get_by_role("button", name="Price this contract").click()
         settle(page)
-        page.get_by_label("Risk loading λ").first.focus()
-        for _ in range(5):
-            page.keyboard.press("ArrowRight")  # lambda 0 to 0.25, in steps of 0.05
-        settle(page)
         full_page(page, "02-note-pricer.png", DESKTOP["width"])
 
         page.goto(f"{URL}/model_evidence")
         settle(page)
         section(page, "03-model-evidence-scores.png", DESKTOP["width"], "survive better tests", "Results for one city")
+        grow(page, DESKTOP["width"])  # the whole page fits, so the selector needs no scrolling
         choose(page, "City", "Chicago (Midway)")
         section(page, "04-model-evidence-calibration.png", DESKTOP["width"], "Results for one city", "Limitations")
 

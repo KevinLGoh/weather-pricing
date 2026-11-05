@@ -319,13 +319,14 @@ with shared.guarded():
     shared.table(
         pd.DataFrame(
             {
+                # The numbers first: on a narrow screen the columns past the edge need scrolling.
                 "Question": boot["question"],
-                "Baseline": [shared.MODEL_LABELS[m] for m in boot["baseline"]],
-                "Challenger": [shared.MODEL_LABELS[m] for m in boot["challenger"]],
                 "Brier difference": [f"{d:.4f}" for d in boot["diff"]],
                 "95% CI": [f"{lo:.4f} to {hi:.4f}" for lo, hi in zip(boot["ci_lo"], boot["ci_hi"])],
                 "p-value": [p_text(p) for p in boot["p_value"]],
                 "City-days": [int(n) for n in boot["n_events"]],
+                "Baseline": [shared.MODEL_LABELS[m] for m in boot["baseline"]],
+                "Challenger": [shared.MODEL_LABELS[m] for m in boot["challenger"]],
             }
         )
     )
