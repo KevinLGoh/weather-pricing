@@ -419,7 +419,7 @@ def test_explorer_lists_dates_snapshots_and_contracts(tmp_path, monkeypatch):
     at = _app(tmp_path, monkeypatch)
     at.run()
     assert not at.exception
-    assert _selectbox(at, "City").options == ["NY"]
+    assert _selectbox(at, "City").options == ["New York (Central Park)"]
     assert [str(d) for d in _selectbox(at, "Date").options] == ["2026-01-03", "2026-01-02"]
     assert _selectbox(at, "Snapshot").options == ["D-1 14:00", "D-0 08:00"]
     labels = ["68°F or below", "69–70°F", "71–72°F", "73°F or above"]
@@ -436,7 +436,7 @@ def test_app_reads_artifacts_next_to_its_own_folder(tmp_path, monkeypatch):
     at.run()
     assert not at.exception
     assert not at.error
-    assert _selectbox(at, "City").options == ["NY"]
+    assert _selectbox(at, "City").options == ["New York (Central Park)"]
 
 
 def test_explorer_shows_all_eight_model_probabilities_by_family(tmp_path, monkeypatch):
@@ -668,7 +668,7 @@ def test_note_pricer_values_the_selected_contract_with_every_model(tmp_path, mon
     assert baseline.options == [shared.MODEL_LABELS[m] for m in experiment.MAIN]
     assert baseline.value == "Weather-only, XGBoost"
     # Summary line: city, date, snapshot and bracket of the selected contract.
-    assert any(all(w in t for w in ["NY", "2026-01-02", "D-0 08:00", "69–70°F"]) for t in _texts(at))
+    assert any(all(w in t for w in ["New York", "2026-01-02", "D-0 08:00", "69–70°F"]) for t in _texts(at))
     prices = _expected_prices()
     expected = _expected_table(shared, prices)
     table = _table(at)

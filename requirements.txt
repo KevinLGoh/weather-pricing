@@ -9,5 +9,6 @@ scikit-learn==1.9.1
 scipy==1.18.1
 xgboost==3.4.1
 streamlit==1.66.1
+altair==6.3.0
 # The weather_pricing package itself.
 .

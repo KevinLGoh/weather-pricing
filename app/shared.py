@@ -9,6 +9,8 @@ import logging
 from contextlib import contextmanager
 from pathlib import Path
 
+import altair as alt
+import pandas as pd
 import streamlit as st
 
 from weather_pricing import inference
@@ -81,6 +83,58 @@ def guarded(message: str = "Loading…"):
         log.exception("Unexpected error in the app")
         st.error(GENERIC_ERROR)
         st.stop()
+
+
+TABLE_ROW_PX = 35  # Streamlit's dataframe row height
+
+
+def table(frame: pd.DataFrame) -> None:
+    """A table tall enough to show every row, because Streamlit otherwise clips after 10."""
+    st.dataframe(frame, hide_index=True, height=(len(frame) + 1) * TABLE_ROW_PX + 3)
+
+
+def metric_rows(models: list[str]) -> list[list[str]]:
+    """Rows of at most three metrics: four in one row would cut their labels off."""
+    if len(models) == 4:
+        return [models[:2], models[2:]]
+    return [models[i : i + 3] for i in range(0, len(models), 3)]
+
+
+def bar_chart(labels: list[str], values: list[float], title: str, domain: list[float] | None = None) -> None:
+    """A static horizontal bar chart with full labels.
+
+    Not st.bar_chart: that cuts long labels off, and scrolling the page over it zooms the
+    axis, which can show impossible values such as negative probabilities.
+    """
+    frame = pd.DataFrame({"Model": labels, "Value": values})
+    scale = alt.Scale(domain=domain) if domain else alt.Undefined
+    chart = (
+        alt.Chart(frame)
+        .mark_bar()
+        .encode(
+            x=alt.X("Value:Q", title=title, scale=scale),
+            y=alt.Y("Model:N", sort=None, title=None, axis=alt.Axis(labelLimit=0)),
+            tooltip=["Model", alt.Tooltip("Value:Q", format=".3f", title=title)],
+        )
+        .properties(height=alt.Step(22))
+    )
+    st.altair_chart(chart, width="stretch")
+
+
+def line_chart(frame: pd.DataFrame, x: str, y: str, color: str) -> None:
+    """A static line chart on the unit square, with every legend entry readable."""
+    unit = alt.Scale(domain=[0, 1])
+    chart = (
+        alt.Chart(frame)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X(f"{x}:Q", scale=unit),
+            y=alt.Y(f"{y}:Q", scale=unit),
+            color=alt.Color(f"{color}:N", legend=alt.Legend(orient="bottom", columns=2, labelLimit=0)),
+        )
+        .properties(height=380)
+    )
+    st.altair_chart(chart, width="stretch")
 
 
 def city_label(key: str) -> str:

@@ -52,7 +52,7 @@ with shared.guarded():
         )
     contract = result["contract"]
     st.markdown(
-        f"Contract: {selection['city']}, {selection['date']}, {selection['snapshot']}, {contract['label']}."
+        f"Contract: {shared.city_label(selection['city'])}, {selection['date']}, {selection['snapshot']}, {contract['label']}."
     )
 
     # "\$": Streamlit Markdown (also in widget labels) reads a $...$ pair as inline math.
@@ -79,7 +79,7 @@ with shared.guarded():
         baseline=baseline,
     )
     labels = [shared.MODEL_LABELS[m] for m in prices["model"]]
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
                 "Model": labels,
@@ -89,16 +89,9 @@ with shared.guarded():
                 "Value": [money(v) for v in prices["value"]],
                 "Change vs baseline": [signed_money(c) for c in prices["change_vs_baseline"]],
             }
-        ),
-        hide_index=True,
+        )
     )
-    st.bar_chart(
-        pd.DataFrame({"Model": labels, "Change vs baseline ($)": list(prices["change_vs_baseline"])}),
-        x="Model",
-        y="Change vs baseline ($)",
-        horizontal=True,
-        sort=False,
-    )
+    shared.bar_chart(labels, list(prices["change_vs_baseline"]), "Change vs baseline ($)")
     headline, headline_label = ("CX_xgb", "the extended weather + market model") if "CX_xgb" in models else ("C_xgb", "the combined XGBoost model")
     if baseline != headline:
         change = float(prices.set_index("model")["change_vs_baseline"][headline])

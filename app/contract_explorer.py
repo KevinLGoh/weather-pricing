@@ -5,7 +5,7 @@ import streamlit as st
 
 import shared
 from weather_pricing import inference
-from weather_pricing.config import CITIES, STALE_HOURS
+from weather_pricing.config import STALE_HOURS
 
 LIMITATION = (
     "Known limitation: the weather models only use forecast runs started at least a day before "
@@ -31,9 +31,7 @@ shared.page_header(
 with shared.guarded():
     cities = inference.list_cities()
     # New York first: it is the longest-studied city and the README's worked example.
-    city = st.selectbox("City", cities, index=cities.index("NY") if "NY" in cities else 0)
-    if city in CITIES:
-        st.caption(f"Settles at {CITIES[city].name}.")
+    city = st.selectbox("City", cities, index=cities.index("NY") if "NY" in cities else 0, format_func=shared.city_label)
     dates = sorted(inference.list_dates(city), reverse=True)
     st.caption(f"Loaded {len(dates)} test days ({dates[-1]} to {dates[0]}) from the app artifacts.")
     day = st.selectbox("Date", dates, format_func=lambda d: d.isoformat())
@@ -44,7 +42,7 @@ with shared.guarded():
     def dollars(x) -> str:
         return "—" if pd.isna(x) else f"${x:.2f}"
 
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
                 "Bracket": contracts["label"],
@@ -52,8 +50,7 @@ with shared.guarded():
                 "Ask": [dollars(x) for x in contracts["ask"]],
                 "Mid": [dollars(x) for x in contracts["mid"]],
             }
-        ),
-        hide_index=True,
+        )
     )
 
     ticker = contracts.loc[contracts["label"] == label, "ticker"].iloc[0]
@@ -83,17 +80,11 @@ with shared.guarded():
     probs = result["probabilities"]
     for family, models in result["families"].items():
         st.subheader(shared.FAMILY_LABELS[family])
-        for column, model in zip(st.columns(len(models)), models):
-            column.metric(shared.MODEL_LABELS[model], f"{probs[model]:.1%}")
-    # Model names as a column with x= (not the index): with an index, Streamlit 1.66 calls
-    # reset_index(inplace=True), which pandas 3.1 deprecates.
-    st.bar_chart(
-        pd.DataFrame({"Model": [shared.MODEL_LABELS[m] for m in probs], "Probability": list(probs.values())}),
-        x="Model",
-        y="Probability",
-        horizontal=True,
-        sort=False,  # keep the family order of the metrics above
-    )
+        for row in shared.metric_rows(models):
+            for column, model in zip(st.columns(3), row):
+                column.metric(shared.MODEL_LABELS[model], f"{probs[model]:.1%}")
+    # In the family order of the metrics above, on the full range a probability can take.
+    shared.bar_chart([shared.MODEL_LABELS[m] for m in probs], list(probs.values()), "Probability", domain=[0, 1])
     st.caption(STRONGER_LIMITATION if "stronger_weather" in result["families"] else LIMITATION)
 
     outcome = result["outcome"]

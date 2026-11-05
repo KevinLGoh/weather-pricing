@@ -31,7 +31,7 @@ FINDING_LIMITATIONS = [
     "delays did not change the conclusions.",
     "Short horizons: these markets cover 34 h or less, so the results say nothing about weather risk "
     "over many days or seasons.",
-    "Two cities, which share weather on some days. The per-city scores below use one chronological "
+    "Two cities, which share weather on some days. The per-city results use one chronological "
     "train/test split, and the rolling-origin tables use 5 windows.",
     "Stale quotes: in illiquid hours the last hourly quote carries over. Such rows are flagged stale and "
     "analysed separately.",
@@ -92,7 +92,7 @@ shared.page_header(
     "Model Evidence",
     [
         "All results are out-of-sample: each model was fitted on earlier days and scored on the later "
-        "test days only.",
+        "test days only. The exact-run blend is the one exception, and its section explains how.",
         "Lower is better for the Brier score, the log loss and the ECE (expected calibration error).",
         "In the bootstrap table a positive difference means the challenger has the lower (better) Brier "
         "score; the 95% interval comes from resampling whole city-days.",
@@ -133,7 +133,7 @@ def show_finding(finding: dict) -> None:
         "are not strictly comparable."
     )
     ladder = finding["ladder"]
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
                 "Test": ladder["test"],
@@ -142,8 +142,7 @@ def show_finding(finding: dict) -> None:
                 "Market lead": [f"{x:.3f}" for x in ladder["lead"]],
                 "95% CI": [interval(lo, hi) for lo, hi in zip(ladder["ci_lo"], ladder["ci_hi"])],
             }
-        ),
-        hide_index=True,
+        )
     )
     st.info(FINDING_CONCLUSION)
 
@@ -153,8 +152,10 @@ def show_finding(finding: dict) -> None:
         "across seasons and as the market matures. Pooled intervals resample whole dates, because two cities on "
         "one date are not independent."
     )
+    # The pooled rows first: they are the headline, and each city then backs them up.
     compared = finding["rolling_comparisons"]
-    st.dataframe(
+    compared = compared.sort_values("city", key=lambda c: (c != "ALL").astype(int), kind="stable")
+    shared.table(
         pd.DataFrame(
             {
                 "Sample": [shared.city_label(c) for c in compared["city"]],
@@ -163,13 +164,12 @@ def show_finding(finding: dict) -> None:
                 "95% CI": [interval(lo, hi, 4) for lo, hi in zip(compared["ci_lo"], compared["ci_hi"])],
                 "p-value": [p_text(p) for p in compared["p_value"]],
             }
-        ),
-        hide_index=True,
+        )
     )
 
     st.markdown("**The market's lead by window**")
     folds = finding["rolling_by_fold"]
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
                 "City": [shared.city_label(c) for c in folds["city"]],
@@ -181,8 +181,7 @@ def show_finding(finding: dict) -> None:
                 "Market lead": [f"{x:.4f}" for x in folds["market_lead"]],
                 "95% CI": [interval(lo, hi, 4) for lo, hi in zip(folds["lead_lo"], folds["lead_hi"])],
             }
-        ),
-        hide_index=True,
+        )
     )
 
     st.markdown("**As the market matured** (both cities)")
@@ -193,19 +192,18 @@ def show_finding(finding: dict) -> None:
     maturity = finding["rolling_by_maturity"]
     enc = finding["rolling_encompassing"]
     by_fold = enc[(enc["city"] == "ALL") & (enc["fold"] != "all")].assign(fold=lambda d: d["fold"].astype(int)).set_index("fold")
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
                 "Window from": maturity["from"],
                 "Median spread": [f"{x * 100:.0f}¢" for x in maturity["median_spread"]],
-                "Stale rows": [f"{x:.0%}" for x in maturity["stale_share"]],
+                "Stale rows": ["< 1%" if x < 0.01 else f"{x:.0%}" for x in maturity["stale_share"]],
                 "Market lead": [f"{x:.3f}" for x in maturity["market_lead"]],
                 "Weather coefficient": [f"{by_fold.loc[k, 'b_weather']:.2f}" for k in maturity["fold"]],
                 "Weather p-value": [p_text(by_fold.loc[k, "p_weather"]) for k in maturity["fold"]],
                 "Market coefficient": [f"{by_fold.loc[k, 'b_market']:.2f}" for k in maturity["fold"]],
             }
-        ),
-        hide_index=True,
+        )
     )
 
     blend = finding["rolling_forward_blend"].set_index("city").loc["ALL"]
@@ -222,7 +220,7 @@ def show_finding(finding: dict) -> None:
         snapshots = finding["rolling_by_snapshot"].sort_values(
             ["city", "snapshot"], key=lambda s: s.map(order) if s.name == "snapshot" else s, kind="stable"
         )
-        st.dataframe(
+        shared.table(
             pd.DataFrame(
                 {
                     "City": [shared.city_label(c) for c in snapshots["city"]],
@@ -232,13 +230,12 @@ def show_finding(finding: dict) -> None:
                     "Market lead": [f"{x:.4f}" for x in snapshots["market_lead"]],
                     "95% CI": [interval(lo, hi, 4) for lo, hi in zip(snapshots["lead_lo"], snapshots["lead_hi"])],
                 }
-            ),
-            hide_index=True,
+            )
         )
         liquidity = finding["rolling_by_liquidity"]
         rank = {label: i for i, label in enumerate(LIQUIDITY_ORDER)}
         liquidity = liquidity.sort_values("liquidity", key=lambda s: s.map(rank).fillna(len(rank)), kind="stable")
-        st.dataframe(
+        shared.table(
             pd.DataFrame(
                 {
                     "Liquidity": [LIQUIDITY_LABELS.get(b, b) for b in liquidity["liquidity"]],
@@ -247,8 +244,7 @@ def show_finding(finding: dict) -> None:
                     "Weather added to market": [f"{x:+.4f}" for x in liquidity["added"]],
                     "95% CI, added": [interval(lo, hi, 4) for lo, hi in zip(liquidity["added_lo"], liquidity["added_hi"])],
                 }
-            ),
-            hide_index=True,
+            )
         )
 
     st.subheader("Exact model runs")
@@ -259,7 +255,7 @@ def show_finding(finding: dict) -> None:
     )
     exact = finding["exact_comparisons"]
     exact = exact[exact["city"] == "ALL"]
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
                 "Question": exact["question"],
@@ -268,12 +264,11 @@ def show_finding(finding: dict) -> None:
                 "p-value": [p_text(p) for p in exact["p_value"]],
                 "Dates": [int(n) for n in exact["n_events"]],
             }
-        ),
-        hide_index=True,
+        )
     )
     by_snapshot = finding["exact_by_snapshot"].set_index("snapshot")
     by_snapshot = by_snapshot.reindex([s for s in inference.SNAPSHOT_LABELS if s in by_snapshot.index]).reset_index()
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
                 "Snapshot": by_snapshot["snapshot"],
@@ -282,8 +277,7 @@ def show_finding(finding: dict) -> None:
                 "Market lead": [f"{x:.4f}" for x in by_snapshot["market_lead"]],
                 "95% CI": [interval(lo, hi, 4) for lo, hi in zip(by_snapshot["lead_lo"], by_snapshot["lead_hi"])],
             }
-        ),
-        hide_index=True,
+        )
     )
 
 
@@ -309,7 +303,7 @@ with shared.guarded():
     # MAIN always, in the family order, and the stronger models when this build has them.
     scored = [m for m in inference.ALL_MODELS if m in MAIN or m in evidence["scores"].index]
     scores = evidence["scores"].reindex(scored)
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
                 "Model": [shared.MODEL_LABELS[m] for m in scored],
@@ -317,13 +311,12 @@ with shared.guarded():
                 "Log loss": [f"{x:.3f}" for x in scores["log_loss"]],
                 "ECE": [f"{x:.3f}" for x in scores["ece"]],
             }
-        ),
-        hide_index=True,
+        )
     )
 
     st.subheader("Does one source add to the other?")
     boot = evidence["bootstrap"]
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
                 "Question": boot["question"],
@@ -334,8 +327,7 @@ with shared.guarded():
                 "p-value": [p_text(p) for p in boot["p_value"]],
                 "City-days": [int(n) for n in boot["n_events"]],
             }
-        ),
-        hide_index=True,
+        )
     )
 
     st.subheader("Encompassing regression")
@@ -357,7 +349,7 @@ with shared.guarded():
         f"{shared.MODEL_LABELS[ENCOMPASSING_MODELS['market']]}. A clearly non-zero market coefficient means "
         f"the market has information the weather model lacks. The weather coefficient {weather_reading}."
     )
-    st.dataframe(
+    shared.table(
         pd.DataFrame(
             {
                 "Term": list(ENCOMPASSING_TERMS.values()),
@@ -365,8 +357,7 @@ with shared.guarded():
                 "SE": [f"{x:.2f}" for x in enc["se"]],
                 "p-value": [p_text(p) for p in enc["p_value"]],
             }
-        ),
-        hide_index=True,
+        )
     )
 
     extended = evidence["encompassing_extended"]
@@ -376,7 +367,7 @@ with shared.guarded():
             f"The same regression with {shared.MODEL_LABELS['X_xgb']}, on this city's test period alone. The "
             "rolling-origin table above covers much more data."
         )
-        st.dataframe(
+        shared.table(
             pd.DataFrame(
                 {
                     "Term": list(ENCOMPASSING_TERMS.values()),
@@ -384,8 +375,7 @@ with shared.guarded():
                     "SE": [f"{x:.2f}" for x in extended["se"]],
                     "p-value": [p_text(p) for p in extended["p_value"]],
                 }
-            ),
-            hide_index=True,
+            )
         )
 
     if finding is None:
@@ -433,35 +423,34 @@ with shared.guarded():
             "Model": labels + ["Perfect calibration"] * 2,
         }
     )
-    # x and y as columns: with an index, Streamlit 1.66 triggers a pandas 3.1 deprecation warning.
-    st.line_chart(chart, x="Mean predicted probability", y="Observed frequency", color="Model")
-    st.dataframe(
-        pd.DataFrame(
-            {
-                "Model": labels,
-                "Bin": [f"{lo:.1f}–{lo + 0.1:.1f}" for lo in reliability["bin_lo"]],
-                "Contracts": [int(n) for n in reliability["n"]],
-                "Mean predicted": [f"{x:.3f}" for x in reliability["mean_pred"]],
-                "Observed": [f"{x:.3f}" for x in reliability["obs_freq"]],
-            }
-        ),
-        hide_index=True,
-    )
+    shared.line_chart(chart, "Mean predicted probability", "Observed frequency", "Model")
+    with st.expander("Calibration table"):
+        shared.table(
+            pd.DataFrame(
+                {
+                    "Model": labels,
+                    "Bin": [f"{lo:.1f}–{lo + 0.1:.1f}" for lo in reliability["bin_lo"]],
+                    "Contracts": [int(n) for n in reliability["n"]],
+                    "Mean predicted": [f"{x:.3f}" for x in reliability["mean_pred"]],
+                    "Observed": [f"{x:.3f}" for x in reliability["obs_freq"]],
+                }
+            )
+        )
 
     robustness = evidence["robustness"]
     st.subheader("By snapshot")
     lead = robustness[robustness["cut"] == "lead"].set_index("snapshot")
     lead = lead.reindex([s for s in inference.SNAPSHOT_LABELS if s in lead.index]).reset_index()
-    st.dataframe(brier_table(lead, "snapshot", "Snapshot"), hide_index=True)
+    shared.table(brier_table(lead, "snapshot", "Snapshot"))
 
     with st.expander("Robustness by liquidity and settlement source"):
         liquidity = robustness[robustness["cut"] == "liquidity"]
         rank = {label: i for i, label in enumerate(LIQUIDITY_ORDER)}
         liquidity = liquidity.sort_values("liquidity", key=lambda s: s.map(rank).fillna(len(rank)), kind="stable")
         liquidity = liquidity.assign(liquidity=liquidity["liquidity"].map(lambda b: LIQUIDITY_LABELS.get(b, b)))
-        st.dataframe(brier_table(liquidity, "liquidity", "Liquidity"), hide_index=True)
+        shared.table(brier_table(liquidity, "liquidity", "Liquidity"))
         sources = robustness[robustness["cut"] == "settle_source"]
-        st.dataframe(brier_table(sources, "settle_source", "Settlement source"), hide_index=True)
+        shared.table(brier_table(sources, "settle_source", "Settlement source"))
         twc = sources[sources["settle_source"] == "The Weather Company"]
         if not twc.empty:
             st.caption(
