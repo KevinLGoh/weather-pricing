@@ -37,19 +37,22 @@ Research pipeline (`src/weather_pricing/`):
 - Evaluation: Brier score, log loss, ECE, reliability tables, an event-clustered
   bootstrap, a forecast-encompassing regression and robustness cuts.
 - A one-period note valuation with a Wang-transform risk loading.
-- `evaluate --save-artifacts`: saves models, out-of-sample predictions, results and a
-  manifest (commit, source-tree hash, package versions, data range, row counts, NOAA
-  access date) to `app_artifacts/`.
+- `app-artifacts`: saves models, out-of-sample predictions, per-city results, the tables
+  across cities and a manifest (commit, source-tree hash, package versions, data range,
+  row counts, NOAA access date) to `app_artifacts/`.
 
 App (`app/`, gets all its data through `src/weather_pricing/inference.py`):
 
-- **Contract Explorer**: pick a city, test-period day, snapshot and contract; compare
-  the probability of every model by family; see the market quote and the outcome.
-- **Note Pricer**: value the note on that contract under every model; change the
-  principal, loss fraction, coupon and λ; compare each model with a chosen baseline.
-- **Model Evidence**: scores, bootstrap confidence intervals, the encompassing
-  regression, calibration, results by snapshot, robustness, limitations and data
-  sources.
+- **Contract Explorer**: pick New York or Chicago, a test-period day, snapshot and
+  contract. Compare the probability of every model by family, including the stronger
+  and extended weather models, and see the market quote and the outcome.
+- **Note Pricer**: value the note on that contract under every model. Change the
+  principal, loss fraction, coupon and λ, and compare each model with a chosen baseline,
+  by default the extended weather model.
+- **Model Evidence**: how the market's lead changes across better tests, the
+  rolling-origin and exact-run tables, then per-city scores, bootstrap confidence
+  intervals, encompassing regressions, calibration, results by snapshot, robustness,
+  limitations and data sources.
 - Every page: short instructions, loading and error messages without stack traces, a
   layout that works on phones, and the research-only notice.
 
@@ -122,14 +125,18 @@ The first `build` for New York takes about 35–45 minutes, mostly Kalshi candle
 about 5 requests per second; it ends by printing the data-quality report. `evaluate`
 takes seconds and prints the results summary (see Results).
 
-**2. Build the app artifacts.**
+**2. Build the app artifacts.** This needs both cities' data and the rolling-origin and
+exact-run results, so run the commands under "Strengthening the main finding" first.
 
 ```bash
-python -m weather_pricing.cli evaluate --save-artifacts
+python -m weather_pricing.cli app-artifacts --data snapshots snapshots_chi
 ```
 
-This writes `app_artifacts/` (about 2 MB): `models.pkl`, `predictions.parquet`, the
-results files and `manifest.json`. The app reads only this folder.
+This writes `app_artifacts/` (about 7 MB): `models.pkl`, `predictions.parquet`,
+`evidence/<city>/` with each city's results, `finding/` with the tables across cities and
+`manifest.json`. Each city has its own fits on its own chronological split. The app reads
+only this folder. `evaluate --save-artifacts` still builds the older single-run layout, which
+the app can also read, and it replaces these files.
 
 **3. Run the app.**
 
@@ -146,21 +153,20 @@ D-1 14:00 (34 hours before the day ends) and the bracket 65–66°F:
 - The market quote is a mid price of \$0.49 (bid \$0.48, ask \$0.51) with a spread of
   \$0.03.
 - The probabilities are 20.0 % (rule-based Gaussian), 26.6 % (weather-only, XGBoost),
-  48.1 % (market mid, renormalised) and 51.7 % (combined, XGBoost).
+  29.4 % (extended weather, XGBoost), 48.1 % (market mid, renormalised) and 52.6 %
+  (extended weather + market, XGBoost).
 - The outcome: the daily high was 66°F, so the contract paid Yes.
 
 Press **Price this contract**. With the default note (principal \$1,000, loss 50 % of
-the principal, coupon \$0, λ = 0) the present value is \$866.68 under the weather-only
-XGBoost model, \$759.56 under the renormalised market mid and \$741.29 under the
-combined XGBoost model: the combined model values the note \$125.39 lower than the
-weather-only baseline. With λ = 0.25 the three values are \$822.75, \$709.98 and
-\$692.26. Model Evidence then shows how these models score on the whole test period.
+the principal, coupon \$0, λ = 0) the present value is \$852.63 under the extended
+weather model, which is the default baseline, \$759.56 under the renormalised market mid
+and \$736.63 under the extended weather + market model, which values the note \$116.00
+lower than the baseline. With λ = 0.25 the three values are \$807.00, \$709.98 and
+\$687.80. Model Evidence then shows how these models score across cities and windows.
 
-**Screenshots** (in `docs/screenshots/`). The Contract Explorer and Note Pricer
-screenshots predate the artifact refresh described under "Reproduction", so their
-weather-only and combined figures differ slightly from the worked example above (for
-example, weather-only XGBoost shows 29.4 % instead of 26.6 %). The text above has the
-current values.
+**Screenshots** (in `docs/screenshots/`). These predate Chicago and the stronger weather
+models, so they show New York with Models A, B and C only, and their figures differ from
+the worked example above. The text above has the current values.
 
 - Contract Explorer with the worked-example contract: selectors, quote, probabilities by
   family, outcome.
@@ -521,7 +527,7 @@ The exact runs take about an hour. The main dataset and the app artifacts are no
 | Original | NY, one split | A (Open-Meteo) | 0.034 (0.029 to 0.038) |
 | Stronger baseline | NY, one split | W (NWS guidance, readings) | 0.015 (0.011 to 0.018) |
 | Replication | Chicago, one split | W | 0.017 (0.014 to 0.020) |
-| Rolling origin | Both cities, 2024-07 on | X (W + more sources) | 0.011 (0.009 to 0.013) |
+| Rolling origin | Both cities, 2024-07 on | X (W + more sources) | 0.011 (0.009 to 0.012) |
 | Exact runs | Both cities, 2026-04 on | X + HRRR, NBM, ECMWF runs | 0.009 (0.006 to 0.012) |
 
 Each better test shrinks the lead, and none closes it. The rows are not strictly
@@ -579,7 +585,7 @@ March 2024, which also gives a multi-model spread.
 | 2024-07 | 6c | 27% | 0.004 | 0.53 | 0.79 |
 | 2025-01 | 4c | 16% | 0.012 | 0.33 | 0.97 |
 | 2025-07 | 3c | 11% | 0.009 | 0.35 | 1.05 |
-| 2026-01 | 1c | 0.2% | 0.015 | 0.38 | 1.00 |
+| 2026-01 | 1c | 0.2% | 0.015 | 0.38 | 0.99 |
 | 2026-07 | 1c | 2% | 0.016 | 0.11 (p = 0.29) | 1.11 |
 
    Weather helps where the market is thin: it adds 0.0022 (CI 0.0011 to 0.0034) on stale
@@ -644,8 +650,7 @@ hourly data, and it says nothing about other weather events or longer horizons.
   TMAX gives the missing values. The experiment uses these values only to fit the
   Gaussian error model. The labels always come from the Kalshi result.
 - **Weak weather baseline.** Models A and C have no ensemble spread and no intraday
-  observations (see Results). The W family adds them in a separate experiment, and the app
-  does not show it yet.
+  observations (see Results). The W and X families add what the archives allow.
 - **One test window in the main experiment.** Models A, B and C in the app and the main
   results use one chronological split. The rolling-origin evaluation covers 5 windows, for
   both cities.
@@ -654,8 +659,9 @@ hourly data, and it says nothing about other weather events or longer horizons.
 
 ## Known issues
 
-- The app covers the test period only (2025-09-15 to 2026-11-02 in the current
-  artifacts), because only those predictions are out-of-sample.
+- The app covers the test period only (2025-09-15 to 2026-11-02 for both cities in the
+  current artifacts), because only those predictions are out-of-sample.
+- The README screenshots predate Chicago and the stronger weather models.
 - A rebuild of the data needs the network (see Quick start); only `evaluate` and the app
   run offline.
 - On Streamlit Community Cloud the Python version is chosen in the app's settings, not
@@ -664,8 +670,7 @@ hourly data, and it says nothing about other weather events or longer horizons.
 ## Future enhancements
 
 - A forecast source with intraday runs (removes the forecast-age limitation).
-- Hourly guidance and full ensembles, if an archive appears, and Chicago and the W and X
-  families in the app.
+- Hourly guidance and full ensembles, if an archive appears.
 - Event-level scores such as the ranked probability score.
 - The other five configured cities, and live scoring of open Kalshi markets, which would
   also collect hourly forecasts going forward.
@@ -746,9 +751,10 @@ src/weather_pricing/
   weather_experiment.py  market against the stronger weather models
   rolling.py         rolling-origin evaluation across cities
   exact_runs.py      test of individually archived model runs
-  cli.py             build / evaluate (--save-artifacts) / weather-baseline / rolling / exact-runs
+  app_build.py       build app_artifacts/ for every city and model
+  cli.py             build / evaluate (--save-artifacts) / weather-baseline / rolling / exact-runs / app-artifacts
 app/                 Streamlit app: streamlit_app.py, the three pages, shared.py
-app_artifacts/       what the app loads (built by evaluate --save-artifacts)
+app_artifacts/       what the app loads (built by app-artifacts)
 docs/screenshots/    README screenshots
 tests/               offline tests (synthetic data, no network)
 requirements*.txt    pinned versions for the app and the tests
