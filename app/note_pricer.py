@@ -82,12 +82,13 @@ with shared.guarded():
     shared.table(
         pd.DataFrame(
             {
+                # The values first: on a narrow screen the columns past the edge need scrolling.
                 "Model": labels,
-                "Family": [shared.FAMILY_LABELS[f] for f in prices["family"]],
-                "Probability": [f"{p:.1%}" for p in prices["probability"]],
-                "Pricing probability": [f"{p:.1%}" for p in prices["pricing_probability"]],
                 "Value": [money(v) for v in prices["value"]],
                 "Change vs baseline": [signed_money(c) for c in prices["change_vs_baseline"]],
+                "Probability": [f"{p:.1%}" for p in prices["probability"]],
+                "Pricing probability": [f"{p:.1%}" for p in prices["pricing_probability"]],
+                "Family": [shared.FAMILY_LABELS[f] for f in prices["family"]],
             }
         )
     )

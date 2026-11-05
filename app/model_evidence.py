@@ -120,8 +120,24 @@ def brier_table(rows: pd.DataFrame, first: str, first_column: str) -> pd.DataFra
     return pd.DataFrame(table)
 
 
+def fixed(x: float, digits: int = 4, signed: bool = False) -> str:
+    """`x` with `digits` decimals, for differences and interval bounds.
+
+    A small value that would round to zero keeps further decimals until it shows, so a table
+    never has "-0.0000": the sign says which side of zero a bound is on, and the digits after
+    it must show that too. `signed` puts a plus sign on positive values.
+    """
+    for decimals in range(digits, digits + 4):
+        text = f"{x:.{decimals}f}"
+        if float(text) != 0:
+            break
+    else:
+        text = f"{0:.{digits}f}"
+    return f"+{text}" if signed and float(text) > 0 else text
+
+
 def interval(lo: float, hi: float, digits: int = 3) -> str:
-    return f"{lo:.{digits}f} to {hi:.{digits}f}"
+    return f"{fixed(lo, digits)} to {fixed(hi, digits)}"
 
 
 def show_finding(finding: dict) -> None:
@@ -136,11 +152,12 @@ def show_finding(finding: dict) -> None:
     shared.table(
         pd.DataFrame(
             {
+                # The numbers first: on a narrow screen the columns past the edge need scrolling.
                 "Test": ladder["test"],
-                "Sample": ladder["sample"],
-                "Weather model": ladder["weather_model"],
                 "Market lead": [f"{x:.3f}" for x in ladder["lead"]],
                 "95% CI": [interval(lo, hi) for lo, hi in zip(ladder["ci_lo"], ladder["ci_hi"])],
+                "Sample": ladder["sample"],
+                "Weather model": ladder["weather_model"],
             }
         )
     )
@@ -160,7 +177,7 @@ def show_finding(finding: dict) -> None:
             {
                 "Sample": [shared.city_label(c) for c in compared["city"]],
                 "Question": compared["question"],
-                "Brier difference": [f"{x:.4f}" for x in compared["diff"]],
+                "Brier difference": [fixed(x) for x in compared["diff"]],
                 "95% CI": [interval(lo, hi, 4) for lo, hi in zip(compared["ci_lo"], compared["ci_hi"])],
                 "p-value": [p_text(p) for p in compared["p_value"]],
             }
@@ -174,12 +191,12 @@ def show_finding(finding: dict) -> None:
             {
                 "City": [shared.city_label(c) for c in folds["city"]],
                 "From": folds["from"],
-                "To": folds["to"],
-                "City-days": [int(n) for n in folds["city_days"]],
+                "Market lead": [fixed(x) for x in folds["market_lead"]],
+                "95% CI": [interval(lo, hi, 4) for lo, hi in zip(folds["lead_lo"], folds["lead_hi"])],
                 "Extended weather": [f"{x:.4f}" for x in folds["X_xgb"]],
                 "Market": [f"{x:.4f}" for x in folds["B_market_norm"]],
-                "Market lead": [f"{x:.4f}" for x in folds["market_lead"]],
-                "95% CI": [interval(lo, hi, 4) for lo, hi in zip(folds["lead_lo"], folds["lead_hi"])],
+                "To": folds["to"],
+                "City-days": [int(n) for n in folds["city_days"]],
             }
         )
     )
@@ -199,9 +216,9 @@ def show_finding(finding: dict) -> None:
                 "Median spread": [f"{x * 100:.0f}¢" for x in maturity["median_spread"]],
                 "Stale rows": ["< 1%" if x < 0.01 else f"{x:.0%}" for x in maturity["stale_share"]],
                 "Market lead": [f"{x:.3f}" for x in maturity["market_lead"]],
-                "Weather coefficient": [f"{by_fold.loc[k, 'b_weather']:.2f}" for k in maturity["fold"]],
+                "Weather coefficient": [fixed(by_fold.loc[k, "b_weather"], 2) for k in maturity["fold"]],
                 "Weather p-value": [p_text(by_fold.loc[k, "p_weather"]) for k in maturity["fold"]],
-                "Market coefficient": [f"{by_fold.loc[k, 'b_market']:.2f}" for k in maturity["fold"]],
+                "Market coefficient": [fixed(by_fold.loc[k, "b_market"], 2) for k in maturity["fold"]],
             }
         )
     )
@@ -211,7 +228,7 @@ def show_finding(finding: dict) -> None:
     st.markdown(
         f"Across all windows the weather coefficient is {overall['b_weather']:.2f} (SE {overall['se_weather']:.2f}), "
         "so the market does not contain all of the forecast. That information is worth little: a blend fitted only "
-        f"on earlier windows changes the Brier score by {blend['diff']:+.4f} "
+        f"on earlier windows changes the Brier score by {fixed(blend['diff'], signed=True)} "
         f"(95% CI {interval(blend['ci_lo'], blend['ci_hi'], 4)}, p {p_with_equals(blend['p_value'])})."
     )
 
@@ -227,7 +244,7 @@ def show_finding(finding: dict) -> None:
                     "Snapshot": snapshots["snapshot"],
                     "Extended weather": [f"{x:.4f}" for x in snapshots["X_xgb"]],
                     "Market": [f"{x:.4f}" for x in snapshots["B_market_norm"]],
-                    "Market lead": [f"{x:.4f}" for x in snapshots["market_lead"]],
+                    "Market lead": [fixed(x) for x in snapshots["market_lead"]],
                     "95% CI": [interval(lo, hi, 4) for lo, hi in zip(snapshots["lead_lo"], snapshots["lead_hi"])],
                 }
             )
@@ -239,9 +256,9 @@ def show_finding(finding: dict) -> None:
             pd.DataFrame(
                 {
                     "Liquidity": [LIQUIDITY_LABELS.get(b, b) for b in liquidity["liquidity"]],
-                    "Market lead": [f"{x:.4f}" for x in liquidity["market_lead"]],
+                    "Market lead": [fixed(x) for x in liquidity["market_lead"]],
                     "95% CI": [interval(lo, hi, 4) for lo, hi in zip(liquidity["lead_lo"], liquidity["lead_hi"])],
-                    "Weather added to market": [f"{x:+.4f}" for x in liquidity["added"]],
+                    "Weather added to market": [fixed(x, signed=True) for x in liquidity["added"]],
                     "95% CI, added": [interval(lo, hi, 4) for lo, hi in zip(liquidity["added_lo"], liquidity["added_hi"])],
                 }
             )
@@ -259,7 +276,7 @@ def show_finding(finding: dict) -> None:
         pd.DataFrame(
             {
                 "Question": exact["question"],
-                "Brier difference": [f"{x:.4f}" for x in exact["diff"]],
+                "Brier difference": [fixed(x) for x in exact["diff"]],
                 "95% CI": [interval(lo, hi, 4) for lo, hi in zip(exact["ci_lo"], exact["ci_hi"])],
                 "p-value": [p_text(p) for p in exact["p_value"]],
                 "Dates": [int(n) for n in exact["n_events"]],
@@ -274,7 +291,7 @@ def show_finding(finding: dict) -> None:
                 "Snapshot": by_snapshot["snapshot"],
                 "Weather with the runs": [f"{x:.4f}" for x in by_snapshot["F_weather"]],
                 "Market": [f"{x:.4f}" for x in by_snapshot["B_market_norm"]],
-                "Market lead": [f"{x:.4f}" for x in by_snapshot["market_lead"]],
+                "Market lead": [fixed(x) for x in by_snapshot["market_lead"]],
                 "95% CI": [interval(lo, hi, 4) for lo, hi in zip(by_snapshot["lead_lo"], by_snapshot["lead_hi"])],
             }
         )
@@ -321,8 +338,8 @@ with shared.guarded():
             {
                 # The numbers first: on a narrow screen the columns past the edge need scrolling.
                 "Question": boot["question"],
-                "Brier difference": [f"{d:.4f}" for d in boot["diff"]],
-                "95% CI": [f"{lo:.4f} to {hi:.4f}" for lo, hi in zip(boot["ci_lo"], boot["ci_hi"])],
+                "Brier difference": [fixed(d) for d in boot["diff"]],
+                "95% CI": [interval(lo, hi, 4) for lo, hi in zip(boot["ci_lo"], boot["ci_hi"])],
                 "p-value": [p_text(p) for p in boot["p_value"]],
                 "City-days": [int(n) for n in boot["n_events"]],
                 "Baseline": [shared.MODEL_LABELS[m] for m in boot["baseline"]],
@@ -354,7 +371,7 @@ with shared.guarded():
         pd.DataFrame(
             {
                 "Term": list(ENCOMPASSING_TERMS.values()),
-                "Coefficient": [f"{x:.2f}" for x in enc["coef"]],
+                "Coefficient": [fixed(x, 2) for x in enc["coef"]],
                 "SE": [f"{x:.2f}" for x in enc["se"]],
                 "p-value": [p_text(p) for p in enc["p_value"]],
             }
@@ -372,7 +389,7 @@ with shared.guarded():
             pd.DataFrame(
                 {
                     "Term": list(ENCOMPASSING_TERMS.values()),
-                    "Coefficient": [f"{x:.2f}" for x in extended["coef"]],
+                    "Coefficient": [fixed(x, 2) for x in extended["coef"]],
                     "SE": [f"{x:.2f}" for x in extended["se"]],
                     "p-value": [p_text(p) for p in extended["p_value"]],
                 }

@@ -355,11 +355,11 @@ def _expected_prices(principal=1000.0, loss_fraction=0.5, coupon=0.0, lam=0.0, b
 def _expected_table(shared, prices):
     return {
         "Model": [shared.MODEL_LABELS[m] for m in prices["model"]],
-        "Family": [shared.FAMILY_LABELS[f] for f in prices["family"]],
-        "Probability": [f"{p:.1%}" for p in prices["probability"]],
-        "Pricing probability": [f"{p:.1%}" for p in prices["pricing_probability"]],
         "Value": [f"${v:,.2f}" for v in prices["value"]],
         "Change vs baseline": [_change(c) for c in prices["change_vs_baseline"]],
+        "Probability": [f"{p:.1%}" for p in prices["probability"]],
+        "Pricing probability": [f"{p:.1%}" for p in prices["pricing_probability"]],
+        "Family": [shared.FAMILY_LABELS[f] for f in prices["family"]],
     }
 
 
@@ -840,6 +840,21 @@ def test_evidence_shows_bootstrap_confidence_intervals(tmp_path, monkeypatch):
     assert table["p-value"][2] == "0.197"
     assert table["Baseline"][2] == "Market mid, renormalised"
     assert table["Challenger"][2] == "Combined, logistic"
+
+
+def test_evidence_never_shows_a_negative_zero(tmp_path, monkeypatch):
+    """A difference too small for four decimals keeps its digits instead of showing "-0.0000"."""
+    folder = _write_artifacts(tmp_path / "app_artifacts")
+    boot = pd.read_csv(folder / "bootstrap.csv")
+    boot.loc[len(boot) - 1, ["diff", "ci_lo", "ci_hi"]] = [-0.00002, -0.00016, 0.00004]
+    boot.to_csv(folder / "bootstrap.csv", index=False)
+    at = _app(tmp_path, monkeypatch, folder=folder)
+    at.run()
+    at.switch_page("model_evidence.py").run()
+    assert not at.exception
+    table = _evidence_table(at, "Question")
+    assert table["Brier difference"][-1] == "-0.00002"
+    assert table["95% CI"][-1] == "-0.0002 to 0.00004"
     terms = _evidence_table(at, "Term")
     assert terms == {
         "Term": ["Intercept", "Weather probability (logit)", "Market probability (logit)"],
