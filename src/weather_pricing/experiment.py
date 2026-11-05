@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -25,6 +28,9 @@ COMPARISONS = [
     ("B_market_mid", "B_market_norm", "Renormalising quotes within an event"),
 ]
 
+
+# Scored in the robustness cuts and calibration whenever a run includes them.
+ROBUSTNESS_EXTRA = ["W_xgb", "X_xgb"]
 
 # Columns of the test-set predictions table, besides one column per model. The app shows
 # these, so they are also what app_artifacts/predictions.parquet carries.
@@ -49,6 +55,17 @@ APP_COLUMNS = [
     "settled_value",
     "y",
 ]
+
+
+@dataclass
+class ExtraModels:
+    """Further models to score alongside A, B and C, on the same rows and split."""
+
+    fit_predict: Callable  # (train, test, val_mask) -> (fitted models, test probabilities)
+    scored: list[str]
+    comparisons: list[tuple[str, str, str]]
+    encompassing_model: str | None = None
+    fitted: dict = field(default_factory=dict)  # filled in by run()
 
 
 def prepare_sample(df: pd.DataFrame) -> pd.DataFrame:
@@ -81,8 +98,11 @@ def run(
     rate: float = 0.04,
     wang_lambda: float = 0.0,
     save_artifacts: bool = False,
+    results_dir: Path | None = None,
+    extra: ExtraModels | None = None,
 ) -> str:
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    results_dir = Path(results_dir) if results_dir is not None else RESULTS_DIR
+    results_dir.mkdir(parents=True, exist_ok=True)
     n0 = len(df)
     data_date_range = [str(df["target_date"].min()), str(df["target_date"].max())]
     cities = sorted(str(c) for c in df["city"].unique())
@@ -90,32 +110,40 @@ def run(
     train, test, val_mask = chronological_split(df, test_frac)
     models = fit_models(train, val_mask)
     preds = predict_models(models, test)
+    if extra is not None:
+        extra.fitted, extra_preds = extra.fit_predict(train, test, val_mask)
+        preds.update(extra_preds)
+    extra_scored = extra.scored if extra is not None else []
     y, groups = test["y"].to_numpy(), test["event_id"].to_numpy()
 
     out = test[APP_COLUMNS].copy()
     for k, p in preds.items():
         out[k] = p
-    out.to_parquet(RESULTS_DIR / "test_predictions.parquet", index=False)
+    out.to_parquet(results_dir / "test_predictions.parquet", index=False)
 
-    scores = ev.score_table(y, {k: preds[k] for k in MAIN})
-    scores.to_csv(RESULTS_DIR / "scores.csv")
+    scores = ev.score_table(y, {k: preds[k] for k in [*MAIN, *extra_scored]})
+    scores.to_csv(results_dir / "scores.csv")
 
     boot = pd.DataFrame(
         [
             {"baseline": a, "challenger": b, "question": q, **ev.bootstrap_diff(y, preds[a], preds[b], groups, n_boot)}
-            for a, b, q in COMPARISONS
+            for a, b, q in [*COMPARISONS, *(extra.comparisons if extra is not None else [])]
         ]
     )
-    boot.to_csv(RESULTS_DIR / "bootstrap.csv", index=False)
+    boot.to_csv(results_dir / "bootstrap.csv", index=False)
 
     enc = ev.encompassing_test(y, preds["A_logit"], preds["B_market_norm"], groups)
-    enc.to_csv(RESULTS_DIR / "encompassing.csv")
+    enc.to_csv(results_dir / "encompassing.csv")
+    if extra is not None and extra.encompassing_model:
+        ev.encompassing_test(y, preds[extra.encompassing_model], preds["B_market_norm"], groups).to_csv(
+            results_dir / "encompassing_extended.csv"
+        )
 
     def by(col: str, frame: pd.DataFrame = out) -> pd.DataFrame:
         rows = []
         for key, g in frame.groupby(col, observed=True):
             r = {col: key, "n": len(g), "events": g["event_id"].nunique()}
-            for k in ["A_xgb", "B_market_norm", "C_logit", "C_xgb"]:
+            for k in ["A_xgb", "B_market_norm", "C_logit", "C_xgb", *[m for m in ROBUSTNESS_EXTRA if m in preds]]:
                 r[k] = ev.brier(g["y"], g[k])
             r["A_minus_C_xgb"] = r["A_xgb"] - r["C_xgb"]
             rows.append(r)
@@ -127,11 +155,16 @@ def run(
     by_city = by("city")
     by_source = by("settle_source")
     pd.concat([by_lead.assign(cut="lead"), by_liq.assign(cut="liquidity"), by_city.assign(cut="city"), by_source.assign(cut="settle_source")]).to_csv(
-        RESULTS_DIR / "robustness.csv", index=False
+        results_dir / "robustness.csv", index=False
     )
 
-    rel = pd.concat([ev.reliability(y, preds[k]).assign(model=k) for k in ["A_xgb", "B_market_norm", "C_xgb"]])
-    rel.to_csv(RESULTS_DIR / "reliability.csv", index=False)
+    rel = pd.concat(
+        [
+            ev.reliability(y, preds[k]).assign(model=k)
+            for k in ["A_xgb", *[m for m in ROBUSTNESS_EXTRA if m in preds], "B_market_norm", "C_xgb"]
+        ]
+    )
+    rel.to_csv(results_dir / "reliability.csv", index=False)
 
     # Valuation: the note pays ~8h after the local day ends (Kalshi settles next morning).
     years = val.horizon_years(out["lead_hours"].to_numpy())
@@ -153,7 +186,7 @@ def run(
             str(lam): float(val.value(preds["C_xgb"], years, note, rate, lam).mean()) for lam in [0.0, 0.1, 0.25, 0.5]
         },
     }
-    (RESULTS_DIR / "valuation.json").write_text(json.dumps(valuation, indent=2))
+    (results_dir / "valuation.json").write_text(json.dumps(valuation, indent=2))
 
     meta = {
         "rows_in": n0,
@@ -162,10 +195,10 @@ def run(
         "test": {"rows": len(test), "events": test["event_id"].nunique(), "dates": [str(test["target_date"].min()), str(test["target_date"].max())]},
         "test_base_rate": float(y.mean()),
     }
-    (RESULTS_DIR / "split.json").write_text(json.dumps(meta, indent=2))
+    (results_dir / "split.json").write_text(json.dumps(meta, indent=2))
 
     md = render_summary(meta, scores, boot, enc, by_lead, by_liq, by_city, by_source, valuation)
-    (RESULTS_DIR / "summary.md").write_text(md)
+    (results_dir / "summary.md").write_text(md)
 
     if save_artifacts:
         info = {
@@ -178,7 +211,7 @@ def run(
             "settings": {"test_frac": test_frac, "n_boot": n_boot, "rate": rate, "wang_lambda": wang_lambda},
         }
         # Only the app's columns and the model probabilities; not the liquidity helper column.
-        artifacts.save(artifacts.ARTIFACTS_DIR, models, out[APP_COLUMNS + list(preds)], RESULTS_DIR, info)
+        artifacts.save(artifacts.ARTIFACTS_DIR, models, out[APP_COLUMNS + list(preds)], results_dir, info)
     return md
 
 

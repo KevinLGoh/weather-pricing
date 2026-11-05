@@ -1,7 +1,8 @@
 """App artifacts: fitted models, out-of-sample predictions, results and a manifest.
 
-`evaluate --save-artifacts` writes these to app_artifacts/, so the app can load
-everything without retraining or calling any API. models.pkl is a pickle: only load
+`app-artifacts` (every city, all models) or `evaluate --save-artifacts` (one combined run)
+writes these to app_artifacts/, so the app can load everything without retraining or
+calling any API. models.pkl is a pickle: only load
 files you built or trust. XGBoost pickles need the same package versions, which the
 manifest records.
 """
@@ -34,7 +35,11 @@ RESULT_FILES = [
     "split.json",
     "summary.md",
     "data_quality.json",
+    "encompassing_extended.csv",
 ]
+# Multi-city layout: evidence/<city>/<results file> and finding/<table>.
+EVIDENCE_DIR = "evidence"
+FINDING_DIR = "finding"
 
 DIRTY_STATUS_ARGS = ("--porcelain", "--untracked-files=no", "--", ".", f":(exclude){ARTIFACTS_DIR.name}")
 
@@ -101,24 +106,73 @@ def _noaa_accessed() -> str:
     return datetime.fromtimestamp(newest, tz=timezone.utc).date().isoformat()
 
 
-def save(out_dir: Path, models: dict, predictions: pd.DataFrame, results_dir: Path, info: dict) -> dict:
-    """Write models, predictions, the existing results files and manifest.json."""
-    out_dir = Path(out_dir)
+def _start(out_dir: Path, models: dict, predictions: pd.DataFrame) -> list[str]:
+    """Clear what an earlier run left and write the models and predictions."""
     out_dir.mkdir(parents=True, exist_ok=True)
     # A run that fails part-way must not leave an old manifest describing other files.
     (out_dir / "manifest.json").unlink(missing_ok=True)
+    # Results of another layout must not be read alongside the new predictions.
+    for folder in (EVIDENCE_DIR, FINDING_DIR):
+        shutil.rmtree(out_dir / folder, ignore_errors=True)
     with open(out_dir / "models.pkl", "wb") as f:
         pickle.dump(models, f)
     predictions.to_parquet(out_dir / "predictions.parquet", index=False)
-    files = ["models.pkl", "predictions.parquet"]
+    return ["models.pkl", "predictions.parquet"]
+
+
+def _copy_results(results_dir: Path, out_dir: Path) -> list[str]:
+    """Copy the results files that exist and remove copies of those that do not."""
+    copied = []
+    out_dir.mkdir(parents=True, exist_ok=True)
     for name in RESULT_FILES:
         src = Path(results_dir) / name
         if src.exists():
             shutil.copyfile(src, out_dir / name)
-            files.append(name)
+            copied.append(name)
         else:
             # Do not leave a copy from an earlier run behind.
             (out_dir / name).unlink(missing_ok=True)
+    return copied
+
+
+def save(out_dir: Path, models: dict, predictions: pd.DataFrame, results_dir: Path, info: dict) -> dict:
+    """Write models, predictions, the existing results files and manifest.json."""
+    out_dir = Path(out_dir)
+    files = _start(out_dir, models, predictions)
+    files += _copy_results(results_dir, out_dir)
+    return _write_manifest(out_dir, sorted(models), predictions, files, info)
+
+
+def save_cities(
+    out_dir: Path,
+    models: dict,
+    model_names: list[str],
+    predictions: pd.DataFrame,
+    city_results: dict[str, Path],
+    finding: dict[str, Path],
+    info: dict,
+) -> dict:
+    """Multi-city artifacts: one evidence folder per city, plus the tables across cities.
+
+    `models` holds each city's fitted models and `model_names` the predictions' model
+    columns. `finding` maps a file name under finding/ to its source. Top-level results
+    files from the single-run layout are removed, so the app cannot mistake them for current
+    ones.
+    """
+    out_dir = Path(out_dir)
+    files = _start(out_dir, models, predictions)
+    for name in RESULT_FILES:
+        (out_dir / name).unlink(missing_ok=True)
+    for city, results_dir in city_results.items():
+        files += [f"{EVIDENCE_DIR}/{city}/{n}" for n in _copy_results(results_dir, out_dir / EVIDENCE_DIR / city)]
+    (out_dir / FINDING_DIR).mkdir(parents=True, exist_ok=True)
+    for name, src in finding.items():
+        shutil.copyfile(src, out_dir / FINDING_DIR / name)
+        files.append(f"{FINDING_DIR}/{name}")
+    return _write_manifest(out_dir, sorted(model_names), predictions, files, info)
+
+
+def _write_manifest(out_dir: Path, model_names: list[str], predictions: pd.DataFrame, files: list[str], info: dict) -> dict:
     # `info` first, so the keys this module sets always win. No default=str: values in
     # `info` must be plain JSON types, so the file matches the returned dict.
     manifest = {
@@ -129,7 +183,7 @@ def save(out_dir: Path, models: dict, predictions: pd.DataFrame, results_dir: Pa
         "packages": _package_versions(),
         "noaa_accessed": _noaa_accessed(),
         "predictions_rows": len(predictions),
-        "models": sorted(models),
+        "models": model_names,
         "files": sorted(files),
     }
     # Temp file + rename, so a crash mid-write never leaves a truncated manifest.

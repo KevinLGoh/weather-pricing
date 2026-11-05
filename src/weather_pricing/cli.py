@@ -5,6 +5,7 @@
     python -m weather_pricing.cli weather-baseline
     python -m weather_pricing.cli rolling --data snapshots snapshots_chi
     python -m weather_pricing.cli exact-runs
+    python -m weather_pricing.cli app-artifacts --data snapshots snapshots_chi
 """
 
 from __future__ import annotations
@@ -48,6 +49,12 @@ def main(argv: list[str] | None = None) -> None:
 
     x = sub.add_parser("exact-runs", help="test individually archived model runs on the rolling predictions")
     x.add_argument("--n-boot", type=int, default=2000)
+
+    a = sub.add_parser("app-artifacts", help="build app_artifacts/ for every city, with the stronger weather models")
+    a.add_argument("--data", nargs="+", default=["snapshots", "snapshots_chi"], help="dataset names under data/processed")
+    a.add_argument("--test-frac", type=float, default=0.3)
+    a.add_argument("--n-boot", type=int, default=2000)
+    a.add_argument("--rate", type=float, default=0.04, help="annual risk-free rate (continuous)")
 
     args = p.parse_args(argv)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -105,6 +112,13 @@ def main(argv: list[str] | None = None) -> None:
         oos = pd.read_parquet(RESULTS_DIR / "rolling" / "oos_predictions.parquet")
         features = enrich_exact(oos[["ticker", "snapshot", "city", "target_date", "snapshot_ts"]])
         print(run(oos, features, RESULTS_DIR / "exact_runs", n_boot=args.n_boot))
+
+
+    elif args.cmd == "app-artifacts":
+        from .app_build import build_artifacts
+
+        manifest = build_artifacts(args.data, args.test_frac, args.n_boot, args.rate)
+        print(json.dumps({k: manifest[k] for k in ["cities", "predictions_rows", "models", "git_dirty"]}, indent=2))
 
 
 if __name__ == "__main__":
