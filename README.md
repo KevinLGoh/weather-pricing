@@ -15,6 +15,20 @@ The prototype asks two things:
    forecast?
 2. How much does the difference change the value of a hypothetical weather-linked note?
 
+## Contents
+
+| Part | Section |
+|---|---|
+| Project description | [What this is](#what-this-is) |
+| Feature list | [Features](#features) |
+| Installation and environment setup | [Installation](#installation), [Environment and API keys](#environment-and-api-keys) |
+| Usage, worked examples and screenshots | [Quick start](#quick-start), [Usage guide](#usage-guide) |
+| Dependency list | [Dependencies](#dependencies) |
+| API key setup (`.env` pattern) | [Environment and API keys](#environment-and-api-keys) |
+| Known issues and future enhancements | [Known issues](#known-issues), [Future enhancements](#future-enhancements) |
+| Research detail | [Data](#data), [Models](#models), [Evaluation](#evaluation), [Valuation](#valuation), [Results](#results), [Stronger weather baseline](#stronger-weather-baseline), [Strengthening the main finding](#strengthening-the-main-finding), [Limitations](#limitations) |
+| Reference | [Data sources, attribution and licences](#data-sources-attribution-and-licences), [Performance](#performance), [Layout](#layout) |
+
 ## What this is
 
 A research pipeline and a small Streamlit app for a risk analyst who prices a
@@ -27,19 +41,39 @@ risk loading λ is illustrative.
 
 Research pipeline (`src/weather_pricing/`):
 
-- Collectors for Kalshi (contracts, outcomes, hourly candles), Open-Meteo (archived NWP
-  runs by run age) and NOAA GHCN-Daily (observed highs), with a cached, throttled HTTP
-  client.
+- Collectors for four sources, with a cached, throttled HTTP client:
+  - Kalshi: contracts, outcomes and hourly candles.
+  - Open-Meteo: archived NWP runs by run age, extra global models and individually
+    archived runs.
+  - NOAA GHCN-Daily: observed highs.
+  - Iowa Environmental Mesonet: station readings and archived GFS MOS, NAM MOS, NBM and
+    LAMP guidance.
 - A point-in-time dataset: one row per contract and snapshot, built only from
-  information published before the snapshot, with a data-quality report.
-- Eight models: a rule-based Gaussian, weather-only (logistic, XGBoost), market-only
+  information published before the snapshot, with a data-quality report. The data
+  covers two cities, New York and Chicago. The configuration has five more.
+- A rule-text extractor. It reads the bracket and the settlement source of each contract
+  from the rule text. It compares the bracket with Kalshi's structured strikes.
+- Eight base models: a rule-based Gaussian, weather-only (logistic, XGBoost), market-only
   (raw mid, renormalised mid, recalibrated logistic) and combined (logistic, XGBoost).
+- Seven more models on better weather data: stronger weather (W: rule, logistic,
+  XGBoost), extended weather (X: logistic, XGBoost) and their market combinations (CW,
+  CX). The app shows all 15.
 - Evaluation: Brier score, log loss, ECE, reliability tables, an event-clustered
-  bootstrap, a forecast-encompassing regression and robustness cuts.
+  bootstrap, a forecast-encompassing regression and robustness cuts by snapshot time,
+  liquidity, settlement source and city.
+- Three further tests of the main finding:
+  - `weather-baseline`: a stronger weather baseline, with a sensitivity run that changes
+    the assumed release delays.
+  - `rolling`: a rolling-origin evaluation across both cities.
+  - `exact-runs`: a test of individually archived model runs.
 - A one-period note valuation with a Wang-transform risk loading.
 - `app-artifacts`: saves models, out-of-sample predictions, per-city results, the tables
   across cities and a manifest (commit, source-tree hash, package versions, data range,
   row counts, NOAA access date) to `app_artifacts/`.
+- One command-line tool for all of the above (`python -m weather_pricing.cli`, or `wp`):
+  `build`, `evaluate`, `weather-baseline`, `rolling`, `exact-runs` and `app-artifacts`.
+- 205 offline tests on synthetic data (no network), and a script that retakes the
+  README screenshots.
 
 App (`app/`, gets all its data through `src/weather_pricing/inference.py`):
 
@@ -58,13 +92,27 @@ App (`app/`, gets all its data through `src/weather_pricing/inference.py`):
 
 ## Installation
 
-Python 3.12 (the version the app artifacts were built with). From the repo root:
+Python 3.12 (the version the app artifacts were built with). Get the code:
+
+```bash
+git clone https://github.com/KevinLGoh/weather-pricing.git
+cd weather-pricing
+```
+
+Then, from the repo root:
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 pip install -e . --no-deps
+```
+
+Check the installation with the test suite. The test suite needs no network and no
+data. It ends with `205 passed` after about 30 seconds:
+
+```bash
+pytest -q
 ```
 
 If `python3.12` is not on the PATH, use the full path to a Python 3.12, for example
@@ -81,42 +129,52 @@ artifacts were built with.
 
 ## Environment and API keys
 
-No API keys are needed: Kalshi, Open-Meteo and NOAA are used through public, token-free
-endpoints. The repo follows the `.env` pattern anyway: `.env.example` lists the
-settings (none today); copy it to `.env` for local values. `.env` and `.env.*` are
-ignored by git (only `.env.example` is tracked); never commit a filled-in `.env`.
+**The project needs no API keys.** It uses Kalshi, Open-Meteo, NOAA and the Iowa
+Environmental Mesonet through public endpoints that need no token. The code reads no
+environment variables. You can skip this section and run everything.
+
+The repo still follows the `.env` pattern. Thus, a future data source with a key has a
+safe place for that key:
+
+- Git tracks `.env.example`. This file lists the names of the settings, with no values.
+  Today it lists none.
+- `.env` is your local copy, with the real values. Git ignores `.env` and `.env.*`, and
+  tracks only `.env.example`. Thus, you cannot commit a key by accident.
+
+If a future data source needs a key, do these steps:
+
+1. Add the name to `.env.example` with an empty value, for example `SOME_API_KEY=`.
+2. Copy the file to `.env`:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+3. Put the real value in `.env` only.
+4. In the code, read the value from the environment (`os.environ["SOME_API_KEY"]`). Do
+   not write the value in the source.
+5. Do not commit a `.env` that contains values.
+6. Do not put a key in the README, an issue or a screenshot.
 
 ## Quick start
 
-```bash
-pip install -e '.[dev,app]'
-```
+The repo includes the built `app_artifacts/`. Thus, the app runs immediately after
+[Installation](#installation), with no download and no build. Run this command from the
+repo root, with the virtual environment active:
 
 ```bash
-python -m weather_pricing.cli build --cities NY --start 2023-01-01
+streamlit run app/streamlit_app.py
 ```
 
-```bash
-python -m weather_pricing.cli evaluate
-```
-
-```bash
-pytest -q
-```
-
-`build` downloads all data from read-only public endpoints. It needs no API keys. It
-caches each raw response under `data/raw/`. A rebuild still needs the network: the
-Kalshi listings and historical cutoff, Open-Meteo chunks that end in the last 8 days and
-NOAA's current year are always fetched again; candles and older weather data come from
-the cache. `evaluate` and the app run offline. `build` writes
-`data/processed/snapshots.parquet` and `results/data_quality.json`.
-
-`evaluate` writes `results/summary.md` and the CSV and JSON detail files.
+Open the local URL that Streamlit prints. Then do the
+[worked examples](#worked-examples). To rebuild the data and the results, start at
+step 1 of the usage guide.
 
 ## Usage guide
 
 All commands run from the repo root with the virtual environment active
-(`source .venv/bin/activate`).
+(`source .venv/bin/activate`). Steps 1 and 2 rebuild the data, the results and the app
+artifacts. To use the app with the artifacts in the repo, go to step 3.
 
 **1. Build the data and the results.**
 
@@ -126,8 +184,16 @@ python -m weather_pricing.cli evaluate
 ```
 
 The first `build` for New York takes about 35–45 minutes, mostly Kalshi candles at
-about 5 requests per second; it ends by printing the data-quality report. `evaluate`
-takes seconds and prints the results summary (see Results).
+about 5 requests per second. It ends with the data-quality report. `evaluate` takes
+seconds and prints the results summary (see Results).
+
+`build` downloads all data from read-only public endpoints. It needs no API keys. It
+caches each raw response under `data/raw/`. A rebuild still needs the network. It always
+fetches these again: the Kalshi listings and historical cutoff, the Open-Meteo chunks
+that end in the last 8 days and NOAA's current year. Candles and older weather data come
+from the cache. `evaluate` and the app run offline. `build` writes
+`data/processed/snapshots.parquet` and `results/data_quality.json`. `evaluate` writes
+`results/summary.md` and the CSV and JSON detail files.
 
 **2. Build the app artifacts.** This needs both cities' data and the rolling-origin and
 exact-run results, so run the commands under "Strengthening the main finding" first.
@@ -152,8 +218,11 @@ streamlit run app/streamlit_app.py
 Start it from the repo root, so Streamlit finds `.streamlit/config.toml`, and open the
 local URL it prints.
 
-**4. Worked example.** In the Contract Explorer, pick New York, 2026-11-02, snapshot
-D-1 14:00 (34 hours before the day ends) and the bracket 65–66°F:
+### Worked examples
+
+**4. Worked example 1: a middle bracket the day before (New York).** In the Contract
+Explorer, pick New York, 2026-11-02, snapshot D-1 14:00 (34 hours before the day ends)
+and the bracket 65–66°F:
 
 - The market quote is a mid price of \$0.49 (bid \$0.48, ask \$0.51) with a spread of
   \$0.03.
@@ -168,6 +237,40 @@ weather model, which is the default baseline, \$759.56 under the renormalised ma
 and \$736.63 under the extended weather + market model, which values the note \$116.00
 lower than the baseline. With λ = 0.25 the three values are \$807.00, \$709.98 and
 \$687.80. Model Evidence then shows how these models score across cities and windows.
+
+**5. Worked example 2: a tail contract on the day, with your own note terms (Chicago).**
+In the Contract Explorer, pick Chicago, 2026-07-15, snapshot D-0 12:00 (12 hours before
+the day ends) and the contract 95°F or below:
+
+- The market quote is a mid price of \$0.56 (bid \$0.54, ask \$0.58) with a spread of
+  \$0.04.
+- The probabilities are 2.8 % (rule-based Gaussian), 2.5 % (weather-only, XGBoost),
+  11.6 % (extended weather, XGBoost), 54.9 % (market mid, renormalised) and 57.5 %
+  (extended weather + market, XGBoost). Every weather model gives this contract a
+  probability of 21 % or less. The market gives it more than 50 %.
+- The outcome: the daily high was 95°F, so the contract paid Yes.
+
+Then price the note:
+
+1. Press **Price this contract**.
+2. Set the principal to \$10,000.
+3. Set the loss to 25 % of the principal.
+4. Set the coupon to \$50.
+5. Keep λ = 0.
+
+The present value is:
+
+- \$9,758.96 under the extended weather model, which is the default baseline.
+- \$8,676.66 under the renormalised market mid.
+- \$8,612.06 under the extended weather + market model. This is \$1,146.90 lower than
+  the baseline.
+
+With λ = 0.25 the three values are \$9,618.25, \$8,435.49 and \$8,375.28.
+
+The baseline and the extended weather + market model are 46 percentage points apart. In
+example 1 they are 23 points apart. The loss fraction here is half the loss fraction of
+example 1. Thus, the change in value is between 11 % and 12 % of the principal in both
+examples.
 
 **Screenshots** (in `docs/screenshots/`). To retake all six, start the app on port 8599 and
 run `python scripts/take_screenshots.py` (it needs `pip install playwright` and Google
@@ -672,10 +775,26 @@ hourly data, and it says nothing about other weather events or longer horizons.
 
 - The app covers the test period only (2025-09-15 to 2026-11-02 for both cities in the
   current artifacts), because only those predictions are out-of-sample.
-- A rebuild of the data needs the network (see Quick start); only `evaluate` and the app
-  run offline.
-- On Streamlit Community Cloud the Python version is chosen in the app's settings, not
-  by this repo; it must be set to 3.12 by hand.
+- A rebuild of the data needs the network (see step 1 of the usage guide). Only
+  `evaluate`, the tests and the app run offline.
+- The first download is slow, because the sources limit the request rate. For each
+  city, Kalshi takes about 35–45 minutes and the weather archives take about 20 minutes.
+  The exact runs take about one hour.
+- `evaluate --save-artifacts` replaces the files in `app_artifacts/` with the older
+  single-run layout. To restore the current app data, run `app-artifacts` again.
+- The command-line tool stops with a message when the package is not an editable install
+  (see Installation). The app and the tests work with either install.
+- The test suite passes, but it shows two `RuntimeWarning`s ("invalid value encountered
+  in sqrt"). They come from the standard errors of the encompassing regression on the
+  small synthetic data.
+- `scripts/take_screenshots.py` needs Playwright and Google Chrome. These are not in
+  `requirements*.txt`.
+- Streamlit Community Cloud takes the Python version from the app's settings, not from
+  this repo. Set the version to 3.12 manually.
+- The repository has no licence file yet.
+
+The research caveats (forecast age, short horizons, assumed release delays and others)
+are under [Limitations](#limitations).
 
 ## Future enhancements
 
