@@ -64,16 +64,20 @@ Python 3.12 (the version the app artifacts were built with). From the repo root:
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
+pip install -e . --no-deps
 ```
 
 If `python3.12` is not on the PATH, use the full path to a Python 3.12, for example
 Homebrew's `/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv .venv`. All later
 commands assume the virtual environment is active.
 
-`requirements.txt` pins the exact package versions of the artifacts and installs the
-package itself (`.`), so run it from the repo root. For development, an editable install
-works too: `pip install -e '.[dev,app]'`; it does not pin the versions the artifacts
-were built with.
+`requirements.txt` pins the exact package versions of the artifacts and installs a copy of
+the package itself (`.`), so run it from the repo root. That copy is enough for the app and
+the tests. The last command replaces it with an editable install, which the command-line
+tool needs: it keeps `data/`, `results/` and `app_artifacts/` beside `src/`, so it stops
+with a message when it runs from a copy. A copy also goes out of date when the source
+changes. `pip install -e '.[dev,app]'` alone works too, but it does not pin the versions the
+artifacts were built with.
 
 ## Environment and API keys
 
@@ -541,8 +545,12 @@ from 0.016 to 0.009.
 
 Chicago settles at a different station and had no part in designing the models. Its data
 is as clean as New York's: the bracket logic reproduces all 8,411 results, and NOAA gives
-the same outcome on every contract. On the same kind of split (test period 2025-09-15 to
-2026-11-02):
+the same outcome on every contract. One training day has two events: Kalshi listed
+2024-02-28 as `HIGHCHI-24FEB28`, with brackets from 24 to 31°F against a high of 53°F, and
+again as `HIGHCHI-2-24FEB28`. Both are kept, so that city-day has 12 contracts, and the
+quality report counts 1,402 events on 1,401 city-days. The split and the bootstrap group
+by city-day, so they treat the two events as one. On the same kind of split (test period
+2025-09-15 to 2026-11-02):
 
 | Model | Brier | Log loss | ECE |
 |---|---|---|---|
