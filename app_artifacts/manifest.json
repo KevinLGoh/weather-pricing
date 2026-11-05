@@ -4,25 +4,52 @@
     "2026-11-02"
   ],
   "cities": [
+    "CHI",
     "NY"
   ],
-  "rows_in": 33473,
-  "rows_used": 32951,
-  "train": {
-    "rows": 23033,
-    "events": 965,
-    "dates": [
-      "2023-01-01",
-      "2025-09-14"
-    ]
-  },
-  "test": {
-    "rows": 9918,
-    "events": 414,
-    "dates": [
-      "2025-09-15",
-      "2026-11-02"
-    ]
+  "splits": {
+    "CHI": {
+      "rows_in": 33533,
+      "rows_used": 33010,
+      "train": {
+        "rows": 23092,
+        "events": 965,
+        "dates": [
+          "2023-01-01",
+          "2025-09-14"
+        ]
+      },
+      "test": {
+        "rows": 9918,
+        "events": 414,
+        "dates": [
+          "2025-09-15",
+          "2026-11-02"
+        ]
+      },
+      "test_base_rate": 0.16666666666666666
+    },
+    "NY": {
+      "rows_in": 33473,
+      "rows_used": 32951,
+      "train": {
+        "rows": 23033,
+        "events": 965,
+        "dates": [
+          "2023-01-01",
+          "2025-09-14"
+        ]
+      },
+      "test": {
+        "rows": 9918,
+        "events": 414,
+        "dates": [
+          "2025-09-15",
+          "2026-11-02"
+        ]
+      },
+      "test_base_rate": 0.16666666666666666
+    }
   },
   "settings": {
     "test_frac": 0.3,
@@ -30,9 +57,9 @@
     "rate": 0.04,
     "wang_lambda": 0.0
   },
-  "created_utc": "2026-11-04T13:38:52+00:00",
-  "git_commit": "1809b9db6e9a818570b8ef471075f1bfb16a6d3d",
-  "src_tree": "fd003715747a45e67bd02af2212e8cb7eecdb6c9",
+  "created_utc": "2026-11-05T00:19:34+00:00",
+  "git_commit": "ab14d20e4065814732d73d122463d89c74010cee",
+  "src_tree": "41f42c9d7b7521c7e4570217bd238aac87710e8e",
   "git_dirty": false,
   "python": "3.12.7",
   "packages": {
@@ -44,26 +71,56 @@
     "pyarrow": "26.0.1"
   },
   "noaa_accessed": "2026-11-04",
-  "predictions_rows": 9918,
+  "predictions_rows": 19836,
   "models": [
     "A_logit",
     "A_xgb",
     "B_logit",
+    "B_market_mid",
+    "B_market_norm",
+    "CW_xgb",
+    "CX_xgb",
     "C_logit",
     "C_xgb",
-    "R_gaussian_rule"
+    "R_gaussian_rule",
+    "W_logit",
+    "W_rule",
+    "W_xgb",
+    "X_logit",
+    "X_xgb"
   ],
   "files": [
-    "bootstrap.csv",
-    "data_quality.json",
-    "encompassing.csv",
+    "evidence/CHI/bootstrap.csv",
+    "evidence/CHI/data_quality.json",
+    "evidence/CHI/encompassing.csv",
+    "evidence/CHI/encompassing_extended.csv",
+    "evidence/CHI/reliability.csv",
+    "evidence/CHI/robustness.csv",
+    "evidence/CHI/scores.csv",
+    "evidence/CHI/split.json",
+    "evidence/CHI/summary.md",
+    "evidence/CHI/valuation.json",
+    "evidence/NY/bootstrap.csv",
+    "evidence/NY/data_quality.json",
+    "evidence/NY/encompassing.csv",
+    "evidence/NY/encompassing_extended.csv",
+    "evidence/NY/reliability.csv",
+    "evidence/NY/robustness.csv",
+    "evidence/NY/scores.csv",
+    "evidence/NY/split.json",
+    "evidence/NY/summary.md",
+    "evidence/NY/valuation.json",
+    "finding/exact_by_snapshot.csv",
+    "finding/exact_comparisons.csv",
+    "finding/ladder.csv",
+    "finding/rolling_by_fold.csv",
+    "finding/rolling_by_liquidity.csv",
+    "finding/rolling_by_maturity.csv",
+    "finding/rolling_by_snapshot.csv",
+    "finding/rolling_comparisons.csv",
+    "finding/rolling_encompassing.csv",
+    "finding/rolling_forward_blend.csv",
     "models.pkl",
-    "predictions.parquet",
-    "reliability.csv",
-    "robustness.csv",
-    "scores.csv",
-    "split.json",
-    "summary.md",
-    "valuation.json"
+    "predictions.parquet"
   ]
 }

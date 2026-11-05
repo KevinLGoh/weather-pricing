@@ -1,0 +1,28 @@
+{
+  "rows": 33533,
+  "contracts": 8411,
+  "events": 1402,
+  "date_range": [
+    "2023-01-01",
+    "2026-11-02"
+  ],
+  "by_city": {
+    "CHI": 1402
+  },
+  "settlement_sources": {
+    "NWS": 7925,
+    "The Weather Company": 486
+  },
+  "rule_text_mismatches": 0,
+  "bracket_logic_matches_result": 1.0,
+  "noaa_outcome_matches_result": 1.0,
+  "settled_minus_noaa_tmax": {
+    "share_equal": 0.9977544910179641,
+    "share_within_1F": 1.0,
+    "n": 1336
+  },
+  "missing_forecast_rows": 523,
+  "stale_rows": 7557,
+  "incomplete_bracket_rows": 38,
+  "event_mid_sum_median": 1.06
+}
